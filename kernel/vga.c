@@ -186,3 +186,11 @@ void vga_draw_box(int row, int col, int height, int width, vga_color_t color) {
 
     cur_attr = saved;
 }
+
+/* Write a single character at an absolute position WITHOUT touching the
+ * scrolling text cursor -- safe to call from a background process that
+ * shares the screen with the shell. */
+void vga_putchar_at(int row, int col, char c, vga_color_t fg, vga_color_t bg) {
+    if (row < 0 || row >= VGA_ROWS || col < 0 || col >= VGA_COLS) return;
+    vga_write_cell(row, col, c, VGA_ATTR(fg, bg));
+}
