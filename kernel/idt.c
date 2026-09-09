@@ -39,8 +39,8 @@ void pic_remap(void) {
     outb(0x21, 0x01); io_wait();   /* ICW4: 8086 mode */
     outb(0xA1, 0x01); io_wait();
 
-    outb(0x21, 0x00); io_wait();   /* unmask all IRQs on master */
-    outb(0xA1, 0x00); io_wait();   /* unmask all IRQs on slave */
+    outb(0x21, 0xFE); io_wait();   /* unmask ONLY IRQ0 (timer) on master */
+    outb(0xA1, 0xFF); io_wait();   /* mask all IRQs on slave - no handlers yet */
 }
 
 /* Program PIT channel 0 to fire at the given frequency (Hz) */
