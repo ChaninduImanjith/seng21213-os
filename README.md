@@ -191,3 +191,44 @@ xxd seng21213-os.img | grep -c aa55  # Verify boot signature
 ---
 
 *Happy hacking! Remember: every commercial OS started exactly like this.*
+
+---
+
+## Stage 1 Progress — Process Management (implemented)
+
+**What was built:**
+- `kernel/process.h` / `kernel/process.c` — `pcb_t` struct (PID, state, saved ESP/EIP,
+  4KB private stack, `next` pointer), a static 16-slot process table, and a
+  singly-linked ready queue (`enqueue`/`dequeue`).
+- `kernel/idt.h` / `kernel/idt.c` — 256-entry IDT, `lidt` load, PIC remap
+  (IRQ0-7 → vectors 32-39, IRQ8-15 → 40-47), and PIT channel 0 programmed
+  to 100 Hz (10 ms time slice) via `pit_init()`.
+- `kernel/isr.asm` — `irq0_handler`: `pushad` saves the interrupted process's
+  registers, calls `scheduler_switch()` (C) with the old ESP, then loads the
+  ESP it returns, `popad` + `iretd` resumes the next process.
+- `kernel/scheduler.c` — `scheduler_switch()` implements round-robin:
+  requeue the process that was just interrupted, dequeue the next one,
+  send PIC EOI, return its saved ESP.
+- `process_create()` pre-builds a **fake interrupt frame** on a new
+  process's stack (dummy EDI/ESI/EBP/EBX/EDX/ECX/EAX, then EIP/CS/EFLAGS)
+  so the very first context switch into it works through the same
+  `popad`/`iretd` path as every subsequent switch.
+- `ps` shell command lists PID + state, marking the currently running one.
+- Two demo processes (`demo_process_a`, `demo_process_b`) print characters
+  to fixed screen positions at different tick-based rates, proving
+  concurrent scheduling.
+
+**Bug fixed during development:** the initial PIC remap unmasked *all*
+IRQs, including IRQ1 (keyboard), which has no IDT handler yet (keyboard is
+polled, not interrupt-driven) — this froze the keyboard. Fixed by masking
+everything except IRQ0 (`outb(0x21, 0xFE)`).
+
+**How to test:**
+
+    make clean && make run
+
+The background counters (cyan letters / red digits, rows 22-23) update on
+their own while the shell stays fully responsive — type `ps` to see all
+three processes and their state.
+
+**Tag:** `v0.2-stage1`
