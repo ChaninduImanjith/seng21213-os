@@ -27,5 +27,6 @@ extern pcb_t *current_process;
 
 pcb_t *process_next_ready(void);
 void   process_requeue(pcb_t *p);
+pcb_t *process_get(int index);
 
 #endif

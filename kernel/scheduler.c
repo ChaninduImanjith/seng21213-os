@@ -2,6 +2,7 @@
 #include "../include/io.h"
 #include "process.h"
 #include "idt.h"
+#include "scheduler.h"
 
 extern void irq0_handler(void);
 

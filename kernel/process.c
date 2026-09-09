@@ -100,3 +100,9 @@ void process_exit(void) {
     }
     for (;;) { __asm__ __volatile__("hlt"); }  /* wait for next timer tick */
 }
+
+pcb_t *process_get(int index) {
+    if (index < 0 || index >= MAX_PROCESSES) return 0;
+    if (process_table[index].state == TERMINATED) return 0;
+    return &process_table[index];
+}
