@@ -8,7 +8,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  build-native:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -34,3 +34,22 @@ jobs:
         with:
           name: seng21213-os-img
           path: seng21213-os.img
+
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build the Docker builder image
+        run: docker build -t seng21213-os-builder .
+
+      - name: Build the OS inside the Docker container
+        run: docker run --rm -v "${{ github.workspace }}":/os seng21213-os-builder
+
+      - name: Verify image produced by Docker build
+        run: |
+          test -f seng21213-os.img
+          size=$(stat -c%s boot/boot.bin)
+          echo "Boot sector: $size bytes"
+          test "$size" -eq 512
