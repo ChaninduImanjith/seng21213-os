@@ -1,0 +1,36 @@
+name: Build OS Image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm gcc gcc-multilib make binutils qemu-system-x86
+
+      - name: Build kernel image
+        run: make clean && make all
+
+      - name: Verify boot sector size
+        run: |
+          test -f seng21213-os.img
+          size=$(stat -c%s boot/boot.bin)
+          echo "Boot sector: $size bytes"
+          test "$size" -eq 512
+
+      - name: Upload built image as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: seng21213-os-img
+          path: seng21213-os.img
