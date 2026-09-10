@@ -232,3 +232,47 @@ their own while the shell stays fully responsive — type `ps` to see all
 three processes and their state.
 
 **Tag:** `v0.2-stage1`
+
+---
+
+## Stage 2 Progress — Threads, Mutex & Semaphore (implemented)
+
+**What was built:**
+- `kernel/process.h`/`.c` refactored: `process_alloc()` is now the shared
+  low-level allocator (builds the fake interrupt frame), used by both
+  `process_create()` and the new `thread_create()`.
+- `kernel/thread.h`/`.c` — kernel threads via a **trampoline pattern**:
+  a thread's saved EIP points at `thread_trampoline()`, which reads
+  `fn`/`arg` off the current PCB and calls the real function — this is
+  how an argument gets passed through when `iretd` can't pass one directly.
+- `kernel/mutex.h`/`.c` — spinlock mutex using `cli`/`sti` to make the
+  "check-then-set" atomic w.r.t. the timer interrupt, `hlt` while waiting.
+- `kernel/semaphore.h`/`.c` — counting semaphore, same `cli`/`sti` pattern.
+- `race` / `racesafe` shell commands — two threads increment a shared
+  `myglobal` 30 times each. To make the race *deterministic* rather than
+  a rare timing accident, each increment is split as
+  `load -> int $32 (forced context switch) -> store`, so the interleaving
+  is guaranteed every run. Without a mutex this reliably loses updates
+  (myglobal ends at 30, not 60); with a mutex it's always correct (60).
+- `pc` shell command — classic bounded-buffer producer/consumer with
+  3 semaphores (`empty`, `full`, `mutex`), 20 items through a 5-slot
+  buffer, verified consumed in order with no corruption.
+- `threads` shell command — lists only PCBs with `thread_fn` set,
+  distinguishing kernel threads from ordinary processes in `ps`.
+
+**Design notes:**
+- Forcing the race with `int $32` instead of a busy-wait delay loop was
+  a deliberate choice: at `-O2` a plain `myglobal++` can compile to a
+  single atomic memory instruction, and even a split load/delay/store can
+  miss the 10ms tick window often enough to look "correct" by luck. An
+  explicit software interrupt between load and store guarantees the
+  interleaving every single run.
+
+**How to test:**
+
+    make clean && make run
+
+Then in the shell: `race` (expect LOST UPDATES), `racesafe` (expect
+CORRECT), `pc` (expect PASS), `threads` (lists active kernel threads).
+
+**Tag:** `v0.3-stage2`
