@@ -15,13 +15,21 @@ typedef struct pcb {
     uint32_t      eip;          /* Saved instruction pointer */
     uint32_t      stack[STACK_SIZE / 4];
     struct pcb   *next;         /* For linked-list ready queue */
+
+    /* Lecture 10: set only for kernel threads, launched via the
+     * thread_trampoline so an argument can be passed in. */
+    void        (*thread_fn)(void *);
+    void         *thread_arg;
 } pcb_t;
 
 void   process_init(void);
 pcb_t *process_create(void (*entry)(void));
-void   process_yield(void);        /* Trigger context switch */
 void   process_exit(void);
-void   scheduler_tick(void);       /* Called by timer IRQ (Lecture 10) */
+
+/* Shared low-level allocator used by both process_create() and
+ * thread_create() (Lecture 10) — finds a free PCB slot, builds the
+ * fake interrupt frame pointing at entry_eip, and enqueues it. */
+pcb_t *process_alloc(uint32_t entry_eip);
 
 extern pcb_t *current_process;
 

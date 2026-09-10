@@ -2,7 +2,7 @@
 #include "process.h"
 
 #define KERNEL_CS   0x08
-#define EFLAGS_IF   0x202   /* interrupt flag set + reserved bit 1 */
+#define EFLAGS_IF   0x202
 
 static pcb_t process_table[MAX_PROCESSES];
 static uint32_t next_pid = 1;
@@ -42,7 +42,7 @@ void process_init(void) {
     next_pid = 1;
 }
 
-pcb_t *process_create(void (*entry)(void)) {
+pcb_t *process_alloc(uint32_t entry_eip) {
     pcb_t *p = 0;
     int i;
     for (i = 0; i < MAX_PROCESSES; i++) {
@@ -53,34 +53,35 @@ pcb_t *process_create(void (*entry)(void)) {
     }
     if (!p) return 0;
 
-    p->pid   = next_pid++;
-    p->state = READY;
-    p->eip   = (uint32_t)entry;
-    p->next  = 0;
+    p->pid        = next_pid++;
+    p->state      = READY;
+    p->eip        = entry_eip;
+    p->next       = 0;
+    p->thread_fn  = 0;
+    p->thread_arg = 0;
 
-    /* Build a fake interrupt frame at the top of this process's stack,
-     * laid out exactly as irq0_handler's "pushad" + the CPU's own
-     * EIP/CS/EFLAGS push would leave it -- so the FIRST time the
-     * scheduler switches to this process, popad + iretd in isr.asm
-     * "resumes" it into entry() as if it had just been interrupted. */
-    uint32_t *sp = &p->stack[STACK_SIZE / 4];   /* one past top */
+    uint32_t *sp = &p->stack[STACK_SIZE / 4];
 
-    *(--sp) = EFLAGS_IF;        /* EFLAGS  (popped by iretd)   */
-    *(--sp) = KERNEL_CS;        /* CS      (popped by iretd)   */
-    *(--sp) = p->eip;           /* EIP     (popped by iretd)   */
-    *(--sp) = 0;                /* EAX                          */
-    *(--sp) = 0;                /* ECX                          */
-    *(--sp) = 0;                /* EDX                          */
-    *(--sp) = 0;                /* EBX                          */
-    *(--sp) = 0;                /* ESP (dummy, popad ignores)   */
-    *(--sp) = 0;                /* EBP                          */
-    *(--sp) = 0;                /* ESI                          */
-    *(--sp) = 0;                /* EDI  <- esp will point here  */
+    *(--sp) = EFLAGS_IF;   /* EFLAGS */
+    *(--sp) = KERNEL_CS;   /* CS     */
+    *(--sp) = entry_eip;   /* EIP    */
+    *(--sp) = 0;           /* EAX */
+    *(--sp) = 0;           /* ECX */
+    *(--sp) = 0;           /* EDX */
+    *(--sp) = 0;           /* EBX */
+    *(--sp) = 0;           /* ESP (dummy) */
+    *(--sp) = 0;           /* EBP */
+    *(--sp) = 0;           /* ESI */
+    *(--sp) = 0;           /* EDI <- esp points here */
 
     p->esp = (uint32_t)sp;
 
     enqueue(p);
     return p;
+}
+
+pcb_t *process_create(void (*entry)(void)) {
+    return process_alloc((uint32_t)entry);
 }
 
 pcb_t *process_next_ready(void) {
@@ -94,15 +95,15 @@ void process_requeue(pcb_t *p) {
     }
 }
 
-void process_exit(void) {
-    if (current_process) {
-        current_process->state = TERMINATED;
-    }
-    for (;;) { __asm__ __volatile__("hlt"); }  /* wait for next timer tick */
-}
-
 pcb_t *process_get(int index) {
     if (index < 0 || index >= MAX_PROCESSES) return 0;
     if (process_table[index].state == TERMINATED) return 0;
     return &process_table[index];
+}
+
+void process_exit(void) {
+    if (current_process) {
+        current_process->state = TERMINATED;
+    }
+    for (;;) { __asm__ __volatile__("hlt"); }
 }
