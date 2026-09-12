@@ -276,3 +276,39 @@ Then in the shell: `race` (expect LOST UPDATES), `racesafe` (expect
 CORRECT), `pc` (expect PASS), `threads` (lists active kernel threads).
 
 **Tag:** `v0.3-stage2`
+
+---
+
+## Stage 3 Progress — Physical Memory Manager (implemented)
+
+**What was built:**
+- `boot/boot.asm` — `detect_memory` runs BIOS INT 0x15 EAX=0xE820 in Real
+  Mode (before the switch to Protected Mode, since BIOS calls aren't
+  available afterward). Stores the entry count at 0x8000 and the raw
+  24-byte SMAP entries starting at 0x8004.
+- `linker.ld` — added a `kernel_end` symbol marking the first byte of
+  physical memory not occupied by the kernel image, so the PMM never
+  hands out a frame the kernel itself is using.
+- `kernel/pmm.h`/`.c` — parses the E820 map, builds a bitmap (1 bit per
+  4KB frame) over the first 32MB (matching QEMU's `-m 32M`), starting
+  pessimistic (everything marked used) and freeing only BIOS-reported
+  usable regions above `kernel_end`. `pmm_alloc_frame()` / `pmm_free_frame()`
+  do a first-fit bitmap scan/clear.
+- `mem` shell command — reports real total/used/free memory from the PMM
+  (previously a hardcoded stub).
+- `memtest` shell command — allocates 100 frames, verifies all addresses
+  are distinct, frees them all, and confirms the free-frame count returns
+  to its exact starting value (proof of no leaks / no double-allocation).
+
+**Design notes:** `kernel_end` is a linker symbol, not a C variable — it
+has no value of its own, so it's always read as `&kernel_end` (its
+address), never `kernel_end` (which would read whatever bytes happen to
+sit at that address).
+
+**How to test:**
+
+    make clean && make run
+
+Then in the shell: `mem` (shows total/used/free), `memtest` (expect PASS).
+
+**Tag:** `v0.4-stage3`
