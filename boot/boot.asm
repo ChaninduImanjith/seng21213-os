@@ -52,6 +52,13 @@ load_kernel:
     call print_rm
 
 ; ---------------------------------------------------------------------------
+; Stage 3: detect physical memory via BIOS INT 0x15, EAX=0xE820, while we
+; are still in Real Mode -- this is the only place we can call the BIOS.
+; Results are stored at 0x8000 (count) / 0x8004 (entries) for pmm_init().
+; ---------------------------------------------------------------------------
+    call detect_memory
+
+; ---------------------------------------------------------------------------
 ; Enter Protected Mode
 ; ---------------------------------------------------------------------------
 enter_pm:
@@ -111,6 +118,39 @@ print_rm:
     int  0x10
     jmp  print_rm
 .done:
+    ret
+
+; ---------------------------------------------------------------------------
+; Subroutine: detect_memory -- BIOS INT 0x15, EAX=0xE820 memory map.
+; Must run in Real Mode (before enter_pm). Walks the BIOS-provided memory
+; map one 24-byte SMAP entry at a time; EBX carries the "continuation"
+; value the BIOS expects back on the next call, and 0 in EBX after a call
+; means "that was the last entry". Stores the entry count as a word at
+; 0x8000, and the raw entries back-to-back starting at 0x8004, so
+; pmm_init() (Stage 3 C code, after Protected Mode) can parse them.
+; ---------------------------------------------------------------------------
+detect_memory:
+    push es
+    xor  ax, ax
+    mov  es, ax
+    mov  di, 0x8004      ; buffer for entries (ES:DI)
+    xor  ebx, ebx        ; 0 = start from the beginning
+    xor  bp, bp          ; bp = entry count so far
+.e820_loop:
+    mov  eax, 0xE820
+    mov  ecx, 24          ; ask for a full 24-byte entry
+    mov  edx, 0x534D4150  ; 'SMAP' magic, required every call
+    int  0x15
+    jc   .e820_done       ; carry set = unsupported or finished
+    cmp  eax, 0x534D4150  ; BIOS should echo the magic back in EAX
+    jne  .e820_done
+    inc  bp
+    add  di, 24            ; advance to next entry slot
+    test ebx, ebx          ; EBX == 0 means that was the last entry
+    jnz  .e820_loop
+.e820_done:
+    mov  [0x8000], bp     ; store final entry count
+    pop  es
     ret
 
 ; ---------------------------------------------------------------------------
