@@ -5,6 +5,7 @@
 #include "thread.h"
 #include "mutex.h"
 #include "semaphore.h"
+#include "pmm.h"
 #include "../include/types.h"
 
 static void cmd_help(void);
@@ -12,6 +13,7 @@ static void cmd_clear(void);
 static void cmd_about(void);
 static void cmd_echo(const char *args);
 static void cmd_mem(void);
+static void cmd_memtest(void);
 static void cmd_ps(void);
 static void cmd_threads(void);
 static void cmd_race(bool use_mutex);
@@ -65,7 +67,8 @@ static void cmd_help(void) {
     vga_puts("  clear    - Clear the screen\n");
     vga_puts("  about    - About this OS and course\n");
     vga_puts("  echo     - Echo text to screen\n");
-    vga_puts("  mem      - Memory map (stub)\n");
+    vga_puts("  mem      - Show physical memory usage\n");
+    vga_puts("  memtest  - Stress-test the PMM (alloc/free 100 frames)\n");
     vga_puts("  ps       - List running processes\n");
     vga_puts("  threads  - List kernel threads\n");
     vga_puts("  race     - Run the myglobal race WITHOUT a mutex\n");
@@ -96,11 +99,14 @@ static void cmd_echo(const char *args) {
 }
 
 static void cmd_mem(void) {
-    vga_puts_color("\n  Memory Map (stub - implement PMM in Lecture 11)\n",
-                   VGA_LIGHT_CYAN, VGA_BLACK);
+    uint32_t total = pmm_total_frames();
+    uint32_t free_f = pmm_free_frames();
+    uint32_t used  = pmm_used_frames();
+    vga_puts_color("\n  Physical Memory Manager\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  -----------------------------------------------\n");
-    vga_puts("  0x00000000 - 0x000FFFFF  :  First 1 MB (reserved/BIOS)\n");
-    vga_puts("  0x00100000 - 0x00EFFFFF  :  Extended memory (usable ~14 MB)\n\n");
+    vga_printf("  Total : %u KB  (%u frames)\n", total * 4, total);
+    vga_printf("  Used  : %u KB  (%u frames)\n", used * 4, used);
+    vga_printf("  Free  : %u KB  (%u frames)\n\n", free_f * 4, free_f);
 }
 
 static const char *state_name(proc_state_t s) {
@@ -109,6 +115,47 @@ static const char *state_name(proc_state_t s) {
         case RUNNING:    return "RUNNING";
         case BLOCKED:    return "BLOCKED";
         default:         return "TERMINATED";
+    }
+}
+
+/* Stage 3 deliverable: allocate 100 frames, verify they are all
+ * distinct (no double-allocation), free them all, and confirm the
+ * free-frame count returns to exactly what it was before -- proof
+ * the allocator has no leaks. */
+static void cmd_memtest(void) {
+    #define MEMTEST_N 100
+    static uint32_t frames[MEMTEST_N];
+    uint32_t before_free = pmm_free_frames();
+    int i, j, ok = 1, duplicates = 0;
+
+    for (i = 0; i < MEMTEST_N; i++) {
+        frames[i] = pmm_alloc_frame();
+        if (frames[i] == 0) { ok = 0; break; }
+    }
+
+    for (i = 0; i < MEMTEST_N && ok; i++) {
+        for (j = i + 1; j < MEMTEST_N; j++) {
+            if (frames[i] == frames[j]) duplicates++;
+        }
+    }
+
+    for (i = 0; i < MEMTEST_N; i++) {
+        if (frames[i] != 0) pmm_free_frame(frames[i]);
+    }
+
+    uint32_t after_free = pmm_free_frames();
+
+    vga_puts_color("\n  PMM stress test: alloc 100 frames, verify, free 100 frames\n",
+                   VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_printf("  free frames before : %u\n", before_free);
+    vga_printf("  free frames after  : %u\n", after_free);
+    vga_printf("  duplicate addresses: %u\n", duplicates);
+
+    if (ok && duplicates == 0 && after_free == before_free) {
+        vga_puts_color("  -> PASS: no leaks, no double-allocation\n\n",
+                       VGA_LIGHT_GREEN, VGA_BLACK);
+    } else {
+        vga_puts_color("  -> FAIL\n\n", VGA_LIGHT_RED, VGA_BLACK);
     }
 }
 
@@ -322,6 +369,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "race")     == 0) { cmd_race(false); continue; }
         if (k_strcmp(cmd, "racesafe") == 0) { cmd_race(true);  continue; }
         if (k_strcmp(cmd, "pc")       == 0) { cmd_pc();        continue; }
+        if (k_strcmp(cmd, "memtest")  == 0) { cmd_memtest();   continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -351,6 +399,7 @@ void kernel_main(void) {
     kb_init();
     print_splash();
 
+    pmm_init();
     mutex_init(&myglobal_mutex);
 
     process_init();
