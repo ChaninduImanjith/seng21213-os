@@ -31,6 +31,11 @@ SECTIONS {
         *(.bss)           /* Uninitialised data – zeroed by convention */
     }
 
+    /* Stage 3: marks the first byte of physical memory NOT used by the
+     * kernel image. pmm_init() must never hand out a frame below this
+     * address, or the allocator could overwrite kernel code/data. */
+    kernel_end = .;
+
     /DISCARD/ : {
         *(.eh_frame)      /* Exception frames – not needed in a bare kernel */
         *(.comment)
