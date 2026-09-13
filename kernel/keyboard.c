@@ -37,7 +37,9 @@ static const char sc_ascii_shift[128] = {
     0,   '*', 0, ' ', 0,
 };
 
-static bool shift_held = false;
+static bool shift_held    = false;
+static bool capslock_on   = false;
+static bool altgr_held    = false;   /* right-Alt: E0-prefixed 0x38 */
 
 void kb_init(void) {
     while (inb(KB_STATUS_PORT) & KB_STATUS_OBF) {
@@ -60,6 +62,10 @@ int kb_getchar(void) {
         if (sc & 0x80) {
             uint8_t release = sc & 0x7F;
             if (release == 0x2A || release == 0x36) shift_held = false;
+            /* Right Alt's release is E0 B8 -- only clear altgr_held if
+             * the E0 prefix actually preceded this 0x38, distinguishing
+             * it from plain Left Alt (0x38 with no E0 prefix). */
+            if (release == 0x38 && extended) altgr_held = false;
             extended = false;
             continue;
         }
@@ -71,13 +77,28 @@ int kb_getchar(void) {
                 case 0x50: return KB_KEY_DOWN;
                 case 0x4B: return KB_KEY_LEFT;
                 case 0x4D: return KB_KEY_RIGHT;
+                case 0x38: altgr_held = true; continue;   /* Right Alt (AltGr) */
                 default:   continue;   /* other extended keys: not handled */
             }
         }
 
         if (sc == 0x2A || sc == 0x36) { shift_held = true; continue; }
+        if (sc == 0x3A) { capslock_on = !capslock_on; continue; }  /* CapsLock: toggle, not held */
 
-        char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
+        /* AltGr demo mapping: AltGr+2 -> '@', the same combo many
+         * European ISO keyboard layouts use. A full accented-character
+         * table is layout-specific and out of scope; this proves the
+         * modifier-detection mechanism and gives one worked example. */
+        char c;
+        if (altgr_held && sc == 0x03) {
+            c = '@';
+        } else {
+            c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
+            if (capslock_on) {
+                if (c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+                else if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+            }
+        }
         if (c) return (int)c;
     }
 }
