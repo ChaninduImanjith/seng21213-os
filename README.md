@@ -312,3 +312,47 @@ sit at that address).
 Then in the shell: `mem` (shows total/used/free), `memtest` (expect PASS).
 
 **Tag:** `v0.4-stage3`
+
+---
+
+## Stage 4 Progress — RAM Disk File System (implemented)
+
+**What was built:**
+- `kernel/ramdisk.h`/`.c` — the "disk" is 1MB of physical memory at a
+  **fixed address (0x200000 / 2MB)**, reserved from the PMM via
+  `pmm_reserve_range()` rather than a `.bss` array. A first attempt used
+  a plain static array; that pushed the kernel's own memory footprint
+  (`0x10000` load address + text/data/bss) past `0xA0000`, colliding
+  with the VGA text buffer at `0xB8000` and blanking the screen. The
+  fixed high address sidesteps that entirely.
+- `kernel/fs.h`/`.c` — a flat, inode-based filesystem over 4KB blocks:
+  block 0 = superblock (magic/counts), block 1 = directory
+  (name → inode index, `-1` = empty slot), block 2 = block bitmap,
+  block 3 = inode bitmap, block 4 = inode table (64 inodes, 8 direct
+  block pointers each, max file size 32KB), blocks 5+ = data.
+  The file name lives in the directory entry, not the inode — the same
+  separation real Unix filesystems use to allow hard links.
+- Shell commands: `ls`, `touch <file>`, `cat <file>`,
+  `write <file> <text>`, `rm <file>` — all backed by the fs API
+  (`fs_write`/`fs_read`/`fs_unlink`/`fs_list`/`fs_size`).
+
+**Bug fixed during development:** seeing a blank QEMU screen after
+adding the RAM disk led to checking `size build/kernel.elf` — `.bss`
+had jumped to ~1.1MB, meaning the kernel's own address range extended
+past the `0xA0000–0xFFFFF` VGA/BIOS hole. Moved the RAM disk to a fixed
+physical address instead of letting the linker place it in `.bss`.
+
+**How to test:**
+
+    make clean && make run
+
+Then: `ls` (0 files) → `touch readme` → `write readme Hello from Stage 4`
+→ `cat readme` → `ls` (readme, size shown) → `rm readme` → `ls` (0 files).
+Verified with 5 files created via `touch a` .. `touch e` and listed with `ls`.
+
+**Known limitation:** arrow keys and copy/paste don't work in the shell —
+inherited from the Stage 0 keyboard driver, which doesn't handle the
+`0xE0`-prefixed extended scancodes arrow keys send. Doesn't affect any
+Stage 0–4 deliverable; listed here for transparency.
+
+**Tag:** `v0.5-stage4`
