@@ -6,33 +6,27 @@
 #include "vga.h"
 #include "../include/types.h"
 
-/* I/O ports */
-#define KB_DATA_PORT   0x60    /* Read scan code / write command */
-#define KB_STATUS_PORT 0x64    /* Read status / write command */
-#define KB_STATUS_OBF  0x01    /* Output Buffer Full bit */
+#define KB_DATA_PORT   0x60
+#define KB_STATUS_PORT 0x64
+#define KB_STATUS_OBF  0x01
 
-/* Inline port I/O */
 static inline uint8_t inb(uint16_t port) {
     uint8_t val;
     __asm__ __volatile__("inb %1, %0" : "=a"(val) : "Nd"(port));
     return val;
 }
 
-/* ---------------------------------------------------------------------------
- * Scancode Set 1 → ASCII translation table (unshifted)
- * Index = scancode. 0 = non-printable / not mapped.
- * --------------------------------------------------------------------------*/
 static const char sc_ascii[128] = {
     0,   27, '1','2','3','4','5','6','7','8','9','0','-','=','\b',
     '\t','q','w','e','r','t','y','u','i','o','p','[',']','\n',
     0,   'a','s','d','f','g','h','j','k','l',';','\'','`',
     0,   '\\','z','x','c','v','b','n','m',',','.','/',
     0,   '*', 0, ' ', 0,
-    0,0,0,0,0,0,0,0,0,0,  /* F1-F10 */
-    0, 0,                  /* NumLock, ScrollLock */
-    '7','8','9','-','4','5','6','+','1','2','3','0','.', /* numpad */
-    0,0,0,                 /* filler */
-    0,0                    /* F11,F12 */
+    0,0,0,0,0,0,0,0,0,0,
+    0, 0,
+    '7','8','9','-','4','5','6','+','1','2','3','0','.',
+    0,0,0,
+    0,0
 };
 
 static const char sc_ascii_shift[128] = {
@@ -46,51 +40,175 @@ static const char sc_ascii_shift[128] = {
 static bool shift_held = false;
 
 void kb_init(void) {
-    /* Flush any stale data in the keyboard buffer */
     while (inb(KB_STATUS_PORT) & KB_STATUS_OBF) {
         inb(KB_DATA_PORT);
     }
 }
 
-char kb_getchar(void) {
+int kb_getchar(void) {
     uint8_t sc;
+    static bool extended = false;
     while (true) {
-        /* Wait until output buffer is full (key available) */
         while (!(inb(KB_STATUS_PORT) & KB_STATUS_OBF));
         sc = inb(KB_DATA_PORT);
 
-        if (sc & 0x80) {
-            /* Key release: bit 7 set, clear modifier state */
-            uint8_t release = sc & 0x7F;
-            if (release == 0x2A || release == 0x36) shift_held = false;
+        if (sc == 0xE0) {
+            extended = true;
             continue;
         }
 
-        /* Key press */
+        if (sc & 0x80) {
+            uint8_t release = sc & 0x7F;
+            if (release == 0x2A || release == 0x36) shift_held = false;
+            extended = false;
+            continue;
+        }
+
+        if (extended) {
+            extended = false;
+            switch (sc) {
+                case 0x48: return KB_KEY_UP;
+                case 0x50: return KB_KEY_DOWN;
+                case 0x4B: return KB_KEY_LEFT;
+                case 0x4D: return KB_KEY_RIGHT;
+                default:   continue;   /* other extended keys: not handled */
+            }
+        }
+
         if (sc == 0x2A || sc == 0x36) { shift_held = true; continue; }
 
-        /* Caps lock / ctrl / alt – ignored in Stage 0 */
-
         char c = shift_held ? sc_ascii_shift[sc] : sc_ascii[sc];
-        if (c) return c;
+        if (c) return (int)c;
     }
 }
 
-int kb_readline(char *buf, int len) {
+/* ---------------------------------------------------------------------------
+ * Line editing: cursor movement (Left/Right) + command history (Up/Down)
+ * --------------------------------------------------------------------------*/
+#define KB_HISTORY_SIZE 20
+
+static char kb_history[KB_HISTORY_SIZE][KB_BUF_SIZE];
+static int  kb_history_count = 0;
+static int  kb_history_next  = 0;
+
+static void history_push(const char *line) {
+    if (line[0] == '\0') return;   /* don't clutter history with empty lines */
     int i = 0;
-    while (i < len - 1) {
-        char c = kb_getchar();
+    while (line[i] && i < KB_BUF_SIZE - 1) { kb_history[kb_history_next][i] = line[i]; i++; }
+    kb_history[kb_history_next][i] = '\0';
+    kb_history_next = (kb_history_next + 1) % KB_HISTORY_SIZE;
+    if (kb_history_count < KB_HISTORY_SIZE) kb_history_count++;
+}
+
+/* back=1 is the most recent entry, back=2 the one before that, etc. */
+static int history_get(int back, char *out) {
+    if (back < 1 || back > kb_history_count) return 0;
+    int idx = (kb_history_next - back + KB_HISTORY_SIZE) % KB_HISTORY_SIZE;
+    int i = 0;
+    while (kb_history[idx][i]) { out[i] = kb_history[idx][i]; i++; }
+    out[i] = '\0';
+    return 1;
+}
+
+/* Redraw the whole line from where it started, pad over any leftover
+ * characters from a longer previous render, then put the hardware
+ * cursor back at the logical edit position. Assumes the line fits on
+ * one row -- fine for normal shell commands, but a very long `write`
+ * command could wrap and throw the column math off. */
+static void redraw_line(int start_row, int start_col, const char *buf,
+                          int line_len, int pos, int *prev_max_len) {
+    int i;
+    vga_set_cursor(start_row, start_col);
+    for (i = 0; i < line_len; i++) vga_putchar(buf[i]);
+    for (i = line_len; i < *prev_max_len; i++) vga_putchar(' ');
+    *prev_max_len = line_len;
+    vga_set_cursor(start_row, start_col + pos);
+}
+
+int kb_readline(char *buf, int len) {
+    int line_len = 0;
+    int pos = 0;
+    int prev_max_len = 0;
+    int start_row, start_col;
+    int hist_back = 0;   /* 0 = editing a fresh line, N = viewing history[N] */
+
+    vga_get_cursor(&start_row, &start_col);
+    buf[0] = '\0';
+
+    for (;;) {
+        int c = kb_getchar();
+
         if (c == '\n' || c == '\r') {
             vga_putchar('\n');
             break;
         }
-        if (c == '\b') {
-            if (i > 0) { i--; vga_putchar('\b'); }
+
+        if (c == KB_KEY_LEFT) {
+            if (pos > 0) { pos--; vga_set_cursor(start_row, start_col + pos); }
             continue;
         }
-        buf[i++] = c;
-        vga_putchar(c);
+        if (c == KB_KEY_RIGHT) {
+            if (pos < line_len) { pos++; vga_set_cursor(start_row, start_col + pos); }
+            continue;
+        }
+
+        if (c == KB_KEY_UP) {
+            char tmp[KB_BUF_SIZE];
+            if (history_get(hist_back + 1, tmp)) {
+                hist_back++;
+                int i = 0;
+                while (tmp[i] && i < len - 1) { buf[i] = tmp[i]; i++; }
+                buf[i] = '\0';
+                line_len = i;
+                pos = i;
+                redraw_line(start_row, start_col, buf, line_len, pos, &prev_max_len);
+            }
+            continue;
+        }
+        if (c == KB_KEY_DOWN) {
+            if (hist_back > 1) {
+                hist_back--;
+                char tmp[KB_BUF_SIZE];
+                history_get(hist_back, tmp);
+                int i = 0;
+                while (tmp[i] && i < len - 1) { buf[i] = tmp[i]; i++; }
+                buf[i] = '\0';
+                line_len = i;
+                pos = i;
+                redraw_line(start_row, start_col, buf, line_len, pos, &prev_max_len);
+            } else if (hist_back == 1) {
+                hist_back = 0;
+                buf[0] = '\0';
+                line_len = 0;
+                pos = 0;
+                redraw_line(start_row, start_col, buf, line_len, pos, &prev_max_len);
+            }
+            continue;
+        }
+
+        if (c == '\b') {
+            if (pos > 0) {
+                int i;
+                for (i = pos - 1; i < line_len - 1; i++) buf[i] = buf[i + 1];
+                line_len--;
+                pos--;
+                buf[line_len] = '\0';
+                redraw_line(start_row, start_col, buf, line_len, pos, &prev_max_len);
+            }
+            continue;
+        }
+
+        if (c >= 32 && c < 127 && line_len < len - 1) {
+            int i;
+            for (i = line_len; i > pos; i--) buf[i] = buf[i - 1];
+            buf[pos] = (char)c;
+            line_len++;
+            pos++;
+            buf[line_len] = '\0';
+            redraw_line(start_row, start_col, buf, line_len, pos, &prev_max_len);
+        }
     }
-    buf[i] = '\0';
-    return i;
+
+    history_push(buf);
+    return line_len;
 }
