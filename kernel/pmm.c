@@ -91,3 +91,19 @@ void pmm_free_frame(uint32_t phys_addr) {
 uint32_t pmm_total_frames(void) { return total_frames; }
 uint32_t pmm_free_frames(void)  { return free_count; }
 uint32_t pmm_used_frames(void)  { return total_frames - free_count; }
+
+/* Explicitly mark a physical range as used, even if pmm_init() had
+ * already freed it from the E820 map. Used to carve out fixed regions
+ * (like the RAM disk) that live above kernel_end but must never be
+ * handed out by pmm_alloc_frame(). */
+void pmm_reserve_range(uint32_t start_addr, uint32_t length) {
+    uint32_t start_frame = start_addr / FRAME_SIZE;
+    uint32_t end_frame   = (start_addr + length + FRAME_SIZE - 1) / FRAME_SIZE;
+    uint32_t f;
+    for (f = start_frame; f < end_frame && f < total_frames; f++) {
+        if (!bitmap_test(f)) {
+            bitmap_set(f);
+            free_count--;
+        }
+    }
+}

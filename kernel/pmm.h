@@ -8,6 +8,7 @@
 void     pmm_init(void);
 uint32_t pmm_alloc_frame(void);   /* returns physical address, 0 = out of memory */
 void     pmm_free_frame(uint32_t phys_addr);
+void     pmm_reserve_range(uint32_t start_addr, uint32_t length);
 uint32_t pmm_total_frames(void);
 uint32_t pmm_free_frames(void);
 uint32_t pmm_used_frames(void);
