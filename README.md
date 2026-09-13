@@ -194,6 +194,31 @@ xxd seng21213-os.img | grep -c aa55  # Verify boot signature
 
 ---
 
+## Screenshots
+
+### Boot — Stage 0/1 splash and shell
+![Boot splash](screenshots/01-boot-splash.png)
+
+### Stage 1 — Round-robin scheduler (`ps`)
+![Scheduler](screenshots/02-stage1-scheduler.png)
+
+### Stage 2 — Race condition, with and without a mutex (`race` / `racesafe`)
+![Race condition](screenshots/03-stage2-race-condition.png)
+
+### Stage 2 — Producer-consumer with 3 semaphores (`pc`)
+![Producer-consumer](screenshots/04-stage2-producer-consumer.png)
+
+### Stage 3 — Physical memory manager stress test (`memtest`)
+![Memory manager](screenshots/05-stage3-memory-manager.png)
+
+### Stage 4 — Creating and reading a file (`touch` / `write` / `cat` / `ls`)
+![Filesystem create](screenshots/06-stage4-filesystem-create.png)
+
+### Stage 4 — Removing a file (`rm`)
+![Filesystem remove](screenshots/07-stage4-filesystem-remove.png)
+
+---
+
 ## Stage 1 Progress — Process Management (implemented)
 
 **What was built:**
