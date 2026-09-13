@@ -356,3 +356,35 @@ inherited from the Stage 0 keyboard driver, which doesn't handle the
 Stage 0–4 deliverable; listed here for transparency.
 
 **Tag:** `v0.5-stage4`
+
+---
+
+## Bonus Extension — Command History & Cursor Editing
+
+**What was built (Stage 0 extension, implemented after Stage 4):**
+- Fixed a bug where arrow keys were misread as numpad digits — PS/2
+  extended keys (arrows, Home/End, etc.) send a `0xE0` prefix byte
+  before their real scancode; the original driver didn't check for it,
+  so the byte following `0xE0` fell straight through the normal
+  translation table and aliased onto the numpad row.
+- `vga_get_cursor()` added so `kb_readline()` can remember where a line
+  started and redraw it in place after an edit.
+- `kb_getchar()` now returns `int`, not `char`, so arrow keys can be
+  signalled as values above the ASCII range (`KB_KEY_UP/DOWN/LEFT/RIGHT`,
+  defined `> 0xFF` so they can never collide with a real character).
+- `kb_readline()` rewritten to support:
+  - **Left/Right** — move the edit cursor within the current line,
+    inserting/deleting at that position (not just at the end).
+  - **Up/Down** — browse a 20-entry ring-buffer command history.
+
+**How to test:**
+
+    make clean && make run
+
+Type a few commands, then press Up to recall the last one, Up again for
+the one before that, Down to go forward again. Press Left/Right and
+retype a character in the middle of a line to confirm in-place editing.
+
+**Design note:** `redraw_line()` assumes the edited line fits on one
+VGA row (true for normal shell commands); a `write` command long enough
+to wrap would throw off the column math used to reposition the cursor.
