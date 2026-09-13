@@ -194,3 +194,11 @@ void vga_putchar_at(int row, int col, char c, vga_color_t fg, vga_color_t bg) {
     if (row < 0 || row >= VGA_ROWS || col < 0 || col >= VGA_COLS) return;
     vga_write_cell(row, col, c, VGA_ATTR(fg, bg));
 }
+
+/* Report the current cursor position -- needed by kb_readline() to
+ * remember where a line started, so it can redraw it after an arrow
+ * key edit without touching anything above/below that line. */
+void vga_get_cursor(int *row, int *col) {
+    *row = cursor_row;
+    *col = cursor_col;
+}
