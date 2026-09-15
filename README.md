@@ -477,3 +477,63 @@ and type anything to snap back to the live prompt.
 
 **Lecture concept:** L07 §5 — VGA memory mapping (treating the text
 buffer as a ring of rows rather than a fixed screen).
+
+---
+
+## Bonus Extension — ANSI Escape-Code Colour Support
+
+**What was built:**
+- `vga_puts_ansi()` (in `vga.c`) parses a minimal subset of ANSI SGR
+  (Select Graphic Rendition) sequences: `ESC[<n>;<n>...m`. Supported
+  codes: `0` (reset), `1` (bold -> bright colour), `30`-`37`
+  (foreground colour). Anything else inside the brackets is parsed but
+  ignored -- unsupported codes have no effect rather than corrupting
+  output.
+- `ansi` shell command demos it: prints all 7 base colours, then 3
+  bold/bright variants, using embedded `\x1b[...m` sequences.
+
+**How to test:**
+
+    make clean && make run
+
+Type `ansi` at the shell -- Red/Green/Yellow/Blue/Magenta/Cyan/White,
+then Bold Red/Green/Blue in brighter shades.
+
+**Lecture concept:** L07 §5 — memory-mapped I/O (parsing an escape
+sequence out of a text stream and translating it into VGA attribute
+bytes rather than printable characters).
+
+---
+
+## Bonus Extension — sleep(ms) with Sorted Wake Queue
+
+**What was built:**
+- `pcb_t` gained a `wake_tick` field (Extension addition).
+- `sleep_ms(ms)` (in `scheduler.c`) converts milliseconds to ticks
+  (100Hz -> 10ms/tick), sets the calling process's `wake_tick`, marks
+  it `BLOCKED`, and immediately triggers a software interrupt
+  (`int $32`) to force a context switch away from it right now, instead
+  of waiting out the rest of its current time slice.
+- `scheduler_switch()` now checks state before requeuing: a process
+  that set itself to `BLOCKED` (i.e., just called `sleep_ms`) is left
+  OUT of the ready queue, unlike a normal preemption which always
+  requeues as `READY`.
+- `process_wake_ready(now)` runs every tick, scanning for any `BLOCKED`
+  process whose `wake_tick` has arrived and handing it back to the
+  ready queue.
+- `demo_process_a`/`demo_process_b` were rewritten to call `sleep_ms()`
+  instead of busy-checking `scheduler_ticks()` in a loop — they now
+  spend most of their time genuinely `BLOCKED` (visible in `ps`), not
+  spinning and burning CPU while waiting.
+
+**How to test:**
+
+    make clean && make run
+
+Run `ps` a few times in a row — PID 2 and 3 should show `BLOCKED` most
+of the time (they're asleep between prints), briefly flipping to
+`READY`/`RUNNING` right when their 200ms/500ms timer fires.
+
+**Lecture concept:** L09 §3 — process state transitions (this is the
+first place `BLOCKED` is actually used for something real, rather than
+mutex/semaphore's busy-wait-with-hlt approach from Stage 2).
