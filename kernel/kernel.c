@@ -202,31 +202,26 @@ static void cmd_threads(void) {
     vga_puts("\n");
 }
 
+/* Extension: rewritten to use sleep_ms() instead of busy-checking
+ * scheduler_ticks() -- these processes now spend most of their time
+ * BLOCKED (visible in `ps`), not burning CPU in a polling loop. */
 static void demo_process_a(void) {
-    uint32_t last = 0;
     uint32_t n = 0;
     for (;;) {
-        uint32_t now = scheduler_ticks();
-        if (now - last >= 20) {
-            last = now;
-            vga_putchar_at(22, 10 + (int)(n % 20), (char)('A' + (n % 26)),
-                            VGA_LIGHT_CYAN, VGA_BLACK);
-            n++;
-        }
+        vga_putchar_at(22, 10 + (int)(n % 20), (char)('A' + (n % 26)),
+                        VGA_LIGHT_CYAN, VGA_BLACK);
+        n++;
+        sleep_ms(200);
     }
 }
 
 static void demo_process_b(void) {
-    uint32_t last = 0;
     uint32_t n = 0;
     for (;;) {
-        uint32_t now = scheduler_ticks();
-        if (now - last >= 50) {
-            last = now;
-            vga_putchar_at(23, 10 + (int)(n % 20), (char)('0' + (n % 10)),
-                            VGA_LIGHT_RED, VGA_BLACK);
-            n++;
-        }
+        vga_putchar_at(23, 10 + (int)(n % 20), (char)('0' + (n % 10)),
+                        VGA_LIGHT_RED, VGA_BLACK);
+        n++;
+        sleep_ms(500);
     }
 }
 

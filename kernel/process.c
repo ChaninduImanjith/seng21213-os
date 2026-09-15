@@ -107,3 +107,16 @@ void process_exit(void) {
     }
     for (;;) { __asm__ __volatile__("hlt"); }
 }
+
+/* Extension: sleep(ms). Scan every slot (not just the ready queue --
+ * a sleeping process isn't in it) for a BLOCKED process whose wake
+ * time has arrived, and hand it back to the scheduler. */
+void process_wake_ready(uint32_t now) {
+    int i;
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        pcb_t *p = &process_table[i];
+        if (p->state == BLOCKED && now >= p->wake_tick) {
+            process_requeue(p);
+        }
+    }
+}

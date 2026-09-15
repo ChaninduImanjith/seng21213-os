@@ -20,6 +20,11 @@ typedef struct pcb {
      * thread_trampoline so an argument can be passed in. */
     void        (*thread_fn)(void *);
     void         *thread_arg;
+
+    /* Extension: sleep(ms) -- valid only while state == BLOCKED due to
+     * a sleep_ms() call. The scheduler wakes this process once
+     * scheduler_ticks() reaches wake_tick. */
+    uint32_t      wake_tick;
 } pcb_t;
 
 void   process_init(void);
@@ -36,5 +41,6 @@ extern pcb_t *current_process;
 pcb_t *process_next_ready(void);
 void   process_requeue(pcb_t *p);
 pcb_t *process_get(int index);
+void   process_wake_ready(uint32_t now);   /* requeue any BLOCKED process whose wake_tick has passed */
 
 #endif
