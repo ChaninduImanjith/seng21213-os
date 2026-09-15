@@ -16,6 +16,8 @@
 #define KB_KEY_DOWN   0x101
 #define KB_KEY_LEFT   0x102
 #define KB_KEY_RIGHT  0x103
+#define KB_KEY_PGUP   0x104
+#define KB_KEY_PGDN   0x105
 
 void kb_init(void);
 

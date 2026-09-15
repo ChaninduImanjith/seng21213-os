@@ -14,6 +14,30 @@ static int     cursor_row  = 0;
 static int     cursor_col  = 0;
 static uint8_t cur_attr    = 0;   /* Current attribute byte */
 
+/* Scrollback: lines that fall off the top in scroll_up() are copied
+ * here (a ring buffer) instead of being lost. Page Up/Down replay them
+ * over the live screen; typing anything else snaps back to live. */
+#define VGA_HISTORY_LINES 100
+static uint16_t history[VGA_HISTORY_LINES][VGA_COLS];
+static int      history_count  = 0;
+static int      history_write  = 0;
+static int      scroll_offset  = 0;   /* 0 = live view */
+static uint16_t live_snapshot[VGA_ROWS][VGA_COLS];
+static bool     live_snapshot_valid = false;
+
+static void history_push_row(int row) {
+    volatile uint16_t *vga = VGA_ADDR;
+    int c;
+    for (c = 0; c < VGA_COLS; c++) history[history_write][c] = vga[row * VGA_COLS + c];
+    history_write = (history_write + 1) % VGA_HISTORY_LINES;
+    if (history_count < VGA_HISTORY_LINES) history_count++;
+}
+
+static uint16_t history_cell(int line_index, int col) {
+    int actual = (history_write - history_count + line_index + VGA_HISTORY_LINES * 2) % VGA_HISTORY_LINES;
+    return history[actual][col];
+}
+
 /* I/O port helpers (inline assembly) */
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -40,6 +64,9 @@ static inline void vga_write_cell(int row, int col, char c, uint8_t attr) {
  * Scroll the screen up by one line when the cursor goes past row 24
  * --------------------------------------------------------------------------*/
 static void scroll_up(void) {
+    /* Save the line about to be discarded into scrollback history. */
+    history_push_row(0);
+
     /* Move every row up by one */
     volatile uint16_t *vga = VGA_ADDR;
     for (int r = 0; r < VGA_ROWS - 1; r++) {
@@ -201,4 +228,70 @@ void vga_putchar_at(int row, int col, char c, vga_color_t fg, vga_color_t bg) {
 void vga_get_cursor(int *row, int *col) {
     *row = cursor_row;
     *col = cursor_col;
+}
+
+
+/* ---------------------------------------------------------------------------
+ * Scrollback API (Extension: VGA scrolling buffer, Page Up / Page Down)
+ * --------------------------------------------------------------------------*/
+bool vga_in_scrollback(void) {
+    return scroll_offset > 0;
+}
+
+static void render_scrollback(void) {
+    volatile uint16_t *vga = VGA_ADDR;
+    int total_lines   = history_count + VGA_ROWS;
+    int last_visible  = total_lines - 1 - scroll_offset;
+    int r, c;
+    for (r = 0; r < VGA_ROWS; r++) {
+        int virtual_line = last_visible - (VGA_ROWS - 1) + r;
+        uint16_t blank = (uint16_t)((cur_attr << 8) | ' ');
+        for (c = 0; c < VGA_COLS; c++) {
+            uint16_t cell;
+            if (virtual_line < 0) {
+                cell = blank;
+            } else if (virtual_line < history_count) {
+                cell = history_cell(virtual_line, c);
+            } else {
+                cell = live_snapshot[virtual_line - history_count][c];
+            }
+            vga[r * VGA_COLS + c] = cell;
+        }
+    }
+}
+
+void vga_scroll_view(int delta) {
+    if (scroll_offset == 0 && delta > 0) {
+        /* Entering scrollback: snapshot the live screen so we can
+         * restore it exactly when the user comes back down. */
+        volatile uint16_t *vga = VGA_ADDR;
+        int r, c;
+        for (r = 0; r < VGA_ROWS; r++)
+            for (c = 0; c < VGA_COLS; c++)
+                live_snapshot[r][c] = vga[r * VGA_COLS + c];
+        live_snapshot_valid = true;
+    }
+
+    scroll_offset += delta;
+    if (scroll_offset < 0) scroll_offset = 0;
+    if (scroll_offset > history_count) scroll_offset = history_count;
+
+    if (scroll_offset == 0) {
+        vga_scroll_reset();
+    } else {
+        render_scrollback();
+    }
+}
+
+void vga_scroll_reset(void) {
+    if (live_snapshot_valid) {
+        volatile uint16_t *vga = VGA_ADDR;
+        int r, c;
+        for (r = 0; r < VGA_ROWS; r++)
+            for (c = 0; c < VGA_COLS; c++)
+                vga[r * VGA_COLS + c] = live_snapshot[r][c];
+        live_snapshot_valid = false;
+    }
+    scroll_offset = 0;
+    update_hw_cursor();
 }

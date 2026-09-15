@@ -50,6 +50,9 @@ void vga_puts_color(const char *str, vga_color_t fg, vga_color_t bg);
 void vga_set_cursor(int row, int col);
 void vga_get_cursor(int *row, int *col);
 void vga_putchar_at(int row, int col, char c, vga_color_t fg, vga_color_t bg);
+void vga_scroll_view(int delta);
+void vga_scroll_reset(void);
+bool vga_in_scrollback(void);
 void vga_printf(const char *fmt, ...);
 
 /* Student extension hook – implement in a later lecture */

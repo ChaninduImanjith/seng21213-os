@@ -78,6 +78,8 @@ int kb_getchar(void) {
                 case 0x4B: return KB_KEY_LEFT;
                 case 0x4D: return KB_KEY_RIGHT;
                 case 0x38: altgr_held = true; continue;   /* Right Alt (AltGr) */
+                case 0x49: return KB_KEY_PGUP;
+                case 0x51: return KB_KEY_PGDN;
                 default:   continue;   /* other extended keys: not handled */
             }
         }
@@ -158,6 +160,15 @@ int kb_readline(char *buf, int len) {
 
     for (;;) {
         int c = kb_getchar();
+
+        if (c == KB_KEY_PGUP) { vga_scroll_view(10);  continue; }
+        if (c == KB_KEY_PGDN) { vga_scroll_view(-10); continue; }
+        if (vga_in_scrollback()) {
+            /* Any other key means "I'm done browsing" -- snap back to
+             * the live view before handling it normally, the same way
+             * a real terminal returns to the prompt when you type. */
+            vga_scroll_reset();
+        }
 
         if (c == '\n' || c == '\r') {
             vga_putchar('\n');
