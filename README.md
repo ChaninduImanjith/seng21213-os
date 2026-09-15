@@ -413,3 +413,67 @@ retype a character in the middle of a line to confirm in-place editing.
 **Design note:** `redraw_line()` assumes the edited line fits on one
 VGA row (true for normal shell commands); a `write` command long enough
 to wrap would throw off the column math used to reposition the cursor.
+
+---
+
+## Bonus Extension — Full ISO Keyboard Layout (CapsLock, AltGr)
+
+**What was built:**
+- **CapsLock** (scancode `0x3A`) — toggles a `capslock_on` flag (not a
+  held-key state like Shift). Applied by flipping the case of whatever
+  character the Shift-state produced, so CapsLock+Shift on a letter
+  correctly cancels out to lowercase, matching real keyboard behaviour.
+- **AltGr** (right Alt, `E0 38` press / `E0 38` release under the `0xE0`
+  extended prefix) — detected as a separate modifier from left Alt
+  (which sends the same `0x38` but with no `E0` prefix). One worked
+  mapping is implemented as a demonstration: `AltGr+2` → `@`, the same
+  combination many European ISO keyboard layouts use. A full
+  accented-character table is layout-specific and out of scope for a
+  teaching kernel, but the modifier-detection mechanism is fully
+  general and can be extended with more mappings.
+
+**How to test:**
+
+    make clean && make run
+
+Press CapsLock, type letters (uppercase); press CapsLock again, type
+letters (lowercase, unaffected). Hold the right Alt key and press `2`
+for `@`.
+
+**Lecture concept:** L08 §3 — interrupt-driven I/O / scancode handling
+(specifically PS/2 Set 1's extended `0xE0` prefix and toggle vs.
+held-key modifier state).
+
+---
+
+## Bonus Extension — VGA Scrollback Buffer (Page Up / Page Down)
+
+**What was built:**
+- `kernel/vga.c` — a 100-line ring buffer (`history[]`). Every time
+  `scroll_up()` is about to discard the top row, that row is copied
+  into history first instead of being lost.
+- `vga_scroll_view(delta)` — on first scrolling back, snapshots the
+  live screen (`live_snapshot[]`) so it can be restored exactly, then
+  renders a window of `history[]` + `live_snapshot[]` at the requested
+  offset. `vga_scroll_reset()` restores the live snapshot and returns
+  to offset 0.
+- `kernel/keyboard.c` — Page Up/Page Down (`E0 49` / `E0 51`) scroll by
+  10 lines; any other key while browsing scrollback snaps back to the
+  live view first, then handles that key normally — the same behaviour
+  a real terminal has when you start typing while scrolled up.
+
+**Known limitation:** background demo processes (`demo_process_a/b`)
+write directly to VGA memory every tick regardless of scrollback state,
+so a stray character can bleed into the scrollback view between
+Page Up presses. Cosmetic only — the underlying history data is correct.
+
+**How to test:**
+
+    make clean && make run
+
+Run `help` a few times until the screen scrolls, then press Page Up
+(repeatedly) to scroll back through history, Page Down to come forward,
+and type anything to snap back to the live prompt.
+
+**Lecture concept:** L07 §5 — VGA memory mapping (treating the text
+buffer as a ring of rows rather than a fixed screen).
