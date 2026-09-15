@@ -295,3 +295,59 @@ void vga_scroll_reset(void) {
     scroll_offset = 0;
     update_hw_cursor();
 }
+
+/* ---------------------------------------------------------------------------
+ * ANSI escape-code colour support (Extension)
+ * Parses a minimal subset of SGR (Select Graphic Rendition) codes:
+ *   ESC [ <n> ; <n> ... m
+ * Supported: 0 (reset), 1 (bold -> bright colour), 30-37 (foreground).
+ * Anything else inside the brackets is silently ignored -- unsupported
+ * codes don't crash, they just have no visual effect.
+ * --------------------------------------------------------------------------*/
+static const vga_color_t ansi_fg_map[8] = {
+    VGA_BLACK, VGA_RED, VGA_GREEN, VGA_BROWN,
+    VGA_BLUE,  VGA_MAGENTA, VGA_CYAN, VGA_LIGHT_GREY
+};
+
+void vga_puts_ansi(const char *str) {
+    vga_color_t fg = VGA_LIGHT_GREY;
+    bool bold = false;
+
+    while (*str) {
+        if (str[0] == 27 && str[1] == '[') {
+            str += 2;
+            int params[8];
+            int nparams = 0;
+            int val = 0;
+            bool have_digit = false;
+
+            while (*str && *str != 'm') {
+                if (*str >= '0' && *str <= '9') {
+                    val = val * 10 + (*str - '0');
+                    have_digit = true;
+                } else if (*str == ';') {
+                    params[nparams < 8 ? nparams++ : 7] = have_digit ? val : 0;
+                    val = 0;
+                    have_digit = false;
+                }
+                str++;
+            }
+            if (*str == 'm') {
+                params[nparams < 8 ? nparams++ : 7] = have_digit ? val : 0;
+                str++;
+            }
+            if (nparams == 0) { fg = VGA_LIGHT_GREY; bold = false; }
+
+            int i;
+            for (i = 0; i < nparams; i++) {
+                int code = params[i];
+                if (code == 0) { fg = VGA_LIGHT_GREY; bold = false; }
+                else if (code == 1) { bold = true; }
+                else if (code >= 30 && code <= 37) { fg = ansi_fg_map[code - 30]; }
+            }
+            vga_set_color((vga_color_t)(fg + (bold ? 8 : 0)), VGA_BLACK);
+            continue;
+        }
+        vga_putchar(*str++);
+    }
+}

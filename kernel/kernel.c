@@ -17,6 +17,7 @@ static void cmd_echo(const char *args);
 static void cmd_mem(void);
 static void cmd_memtest(void);
 static void cmd_ls(void);
+static void cmd_ansi(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -86,6 +87,7 @@ static void cmd_help(void) {
     vga_puts("  cat      - Print file contents\n");
     vga_puts("  write    - write <file> <text> - write text to a file\n");
     vga_puts("  rm       - Remove a file\n");
+    vga_puts("  ansi     - Demo ANSI escape-code colours\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -424,6 +426,12 @@ static void cmd_rm(const char *name) {
     }
 }
 
+static void cmd_ansi(void) {
+    vga_puts("\n");
+    vga_puts_ansi("\x1b[31mRed \x1b[32mGreen \x1b[33mYellow \x1b[34mBlue \x1b[35mMagenta \x1b[36mCyan \x1b[37mWhite\x1b[0m\n");
+    vga_puts_ansi("\x1b[1;31mBold Red \x1b[1;32mBold Green \x1b[1;34mBold Blue\x1b[0m\n\n");
+}
+
 static char  shell_buf[256];
 static char  prompt[] = "\n  ksh> ";
 
@@ -453,6 +461,7 @@ static void shell_run(void) {
         if (k_strncmp(cmd, "cat ", 4)   == 0) { cmd_cat(k_ltrim(cmd + 4));      continue; }
         if (k_strncmp(cmd, "write ", 6) == 0) { cmd_write(k_ltrim(cmd + 6));    continue; }
         if (k_strncmp(cmd, "rm ", 3)    == 0) { cmd_rm(k_ltrim(cmd + 3));       continue; }
+        if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
