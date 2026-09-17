@@ -34,7 +34,15 @@ typedef struct pcb {
      * the new PID for the parent. */
     bool          fork_requested;
     int           fork_return_value;
+
+    /* Extension: MLFQ scheduler. 0 = highest priority, MLFQ_LEVELS-1 =
+     * lowest. Demoted on a full-time-slice preemption, boosted on
+     * waking from a voluntary block, and periodically reset to 0 for
+     * everyone to prevent starvation. */
+    int           priority;
 } pcb_t;
+
+#define MLFQ_LEVELS 3
 
 void   process_init(void);
 pcb_t *process_create(void (*entry)(void));
@@ -56,5 +64,10 @@ void   process_wake_ready(uint32_t now);   /* requeue any BLOCKED process whose 
  * not directly by user code -- call fork() instead. */
 void   process_do_fork(uint32_t parent_esp);
 int    fork(void);
+
+/* Extension: MLFQ. Reset every non-terminated process to priority 0
+ * and physically move anyone waiting at a lower level up to level 0.
+ * Called periodically by the scheduler to prevent starvation. */
+void   process_boost_all(void);
 
 #endif

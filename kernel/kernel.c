@@ -19,6 +19,7 @@ static void cmd_memtest(void);
 static void cmd_ls(void);
 static void cmd_ansi(void);
 static void cmd_forktest(void);
+static void cmd_cpuhog(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -90,6 +91,7 @@ static void cmd_help(void) {
     vga_puts("  rm       - Remove a file\n");
     vga_puts("  ansi     - Demo ANSI escape-code colours\n");
     vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
+    vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -175,13 +177,13 @@ static void cmd_memtest(void) {
 
 static void cmd_ps(void) {
     int i;
-    vga_puts_color("\n  PID   STATE       KIND\n", VGA_YELLOW, VGA_BLACK);
-    vga_puts("  -----------------------------------\n");
+    vga_puts_color("\n  PID   STATE       KIND      PRIO\n", VGA_YELLOW, VGA_BLACK);
+    vga_puts("  -----------------------------------------\n");
     for (i = 0; i < MAX_PROCESSES; i++) {
         pcb_t *p = process_get(i);
         if (!p) continue;
-        vga_printf("  %u     %s     %s", p->pid, state_name(p->state),
-                   p->thread_fn ? "thread" : "process");
+        vga_printf("  %u     %s     %s   %d", p->pid, state_name(p->state),
+                   p->thread_fn ? "thread" : "process", p->priority);
         if (p == current_process) {
             vga_puts_color("  <-- running now", VGA_LIGHT_GREEN, VGA_BLACK);
         }
@@ -423,6 +425,29 @@ static void cmd_rm(const char *name) {
     }
 }
 
+static void cpuhog_process(void) {
+    uint32_t counter = 0;
+    for (;;) {
+        counter++;   /* pure CPU-bound busy loop -- never sleeps or blocks */
+        if ((counter & 0xFFFFF) == 0) {
+            /* Periodic screen update proves it's genuinely spinning,
+             * and keeps the compiler from warning that counter is
+             * "set but not used". */
+            vga_putchar_at(24, 60, (char)('0' + ((counter >> 20) % 10)),
+                            VGA_YELLOW, VGA_BLACK);
+        }
+    }
+}
+
+static void cmd_cpuhog(void) {
+    pcb_t *p = process_create(cpuhog_process);
+    if (p) {
+        vga_printf("\n  Spawned CPU-bound PID %u -- never sleeps, watch it demote in ps.\n\n", p->pid);
+    } else {
+        vga_puts_color("  Could not spawn -- process table full\n\n", VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
 static void cmd_forktest(void) {
     vga_puts("\n  Calling fork()...\n");
     int result = fork();
@@ -477,6 +502,7 @@ static void shell_run(void) {
         if (k_strncmp(cmd, "rm ", 3)    == 0) { cmd_rm(k_ltrim(cmd + 3));       continue; }
         if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
         if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
+        if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));

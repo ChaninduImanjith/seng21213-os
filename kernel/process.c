@@ -7,28 +7,38 @@
 static pcb_t process_table[MAX_PROCESSES];
 static uint32_t next_pid = 1;
 
-static pcb_t *ready_head = 0;
-static pcb_t *ready_tail = 0;
+/* Extension: MLFQ -- one ready queue PER priority level instead of a
+ * single list. Level 0 is always drained first. */
+static pcb_t *ready_head[MLFQ_LEVELS];
+static pcb_t *ready_tail[MLFQ_LEVELS];
 
 pcb_t *current_process = 0;
 
-static void enqueue(pcb_t *p) {
+static void enqueue_at(pcb_t *p, int level) {
+    if (level < 0) level = 0;
+    if (level >= MLFQ_LEVELS) level = MLFQ_LEVELS - 1;
+    p->priority = level;
     p->next = 0;
-    if (ready_tail) {
-        ready_tail->next = p;
+    if (ready_tail[level]) {
+        ready_tail[level]->next = p;
     } else {
-        ready_head = p;
+        ready_head[level] = p;
     }
-    ready_tail = p;
+    ready_tail[level] = p;
 }
 
-static pcb_t *dequeue(void) {
-    if (!ready_head) return 0;
-    pcb_t *p = ready_head;
-    ready_head = ready_head->next;
-    if (!ready_head) ready_tail = 0;
-    p->next = 0;
-    return p;
+static pcb_t *dequeue_highest(void) {
+    int level;
+    for (level = 0; level < MLFQ_LEVELS; level++) {
+        if (ready_head[level]) {
+            pcb_t *p = ready_head[level];
+            ready_head[level] = p->next;
+            if (!ready_head[level]) ready_tail[level] = 0;
+            p->next = 0;
+            return p;
+        }
+    }
+    return 0;
 }
 
 void process_init(void) {
@@ -36,8 +46,10 @@ void process_init(void) {
     for (i = 0; i < MAX_PROCESSES; i++) {
         process_table[i].state = TERMINATED;
     }
-    ready_head = 0;
-    ready_tail = 0;
+    for (i = 0; i < MLFQ_LEVELS; i++) {
+        ready_head[i] = 0;
+        ready_tail[i] = 0;
+    }
     current_process = 0;
     next_pid = 1;
 }
@@ -62,21 +74,21 @@ pcb_t *process_alloc(uint32_t entry_eip) {
 
     uint32_t *sp = &p->stack[STACK_SIZE / 4];
 
-    *(--sp) = EFLAGS_IF;   /* EFLAGS */
-    *(--sp) = KERNEL_CS;   /* CS     */
-    *(--sp) = entry_eip;   /* EIP    */
-    *(--sp) = 0;           /* EAX */
-    *(--sp) = 0;           /* ECX */
-    *(--sp) = 0;           /* EDX */
-    *(--sp) = 0;           /* EBX */
-    *(--sp) = 0;           /* ESP (dummy) */
-    *(--sp) = 0;           /* EBP */
-    *(--sp) = 0;           /* ESI */
-    *(--sp) = 0;           /* EDI <- esp points here */
+    *(--sp) = EFLAGS_IF;
+    *(--sp) = KERNEL_CS;
+    *(--sp) = entry_eip;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
+    *(--sp) = 0;
 
     p->esp = (uint32_t)sp;
 
-    enqueue(p);
+    enqueue_at(p, 0);   /* MLFQ: everyone starts at the highest priority */
     return p;
 }
 
@@ -85,13 +97,13 @@ pcb_t *process_create(void (*entry)(void)) {
 }
 
 pcb_t *process_next_ready(void) {
-    return dequeue();
+    return dequeue_highest();
 }
 
 void process_requeue(pcb_t *p) {
     if (p->state != TERMINATED) {
         p->state = READY;
-        enqueue(p);
+        enqueue_at(p, p->priority);
     }
 }
 
@@ -108,15 +120,35 @@ void process_exit(void) {
     for (;;) { __asm__ __volatile__("hlt"); }
 }
 
-/* Extension: sleep(ms). Scan every slot (not just the ready queue --
- * a sleeping process isn't in it) for a BLOCKED process whose wake
- * time has arrived, and hand it back to the scheduler. */
 void process_wake_ready(uint32_t now) {
     int i;
     for (i = 0; i < MAX_PROCESSES; i++) {
         pcb_t *p = &process_table[i];
         if (p->state == BLOCKED && now >= p->wake_tick) {
+            /* MLFQ: waking from a voluntary block is I/O-bound
+             * behaviour -- reward it with a priority boost. */
+            if (p->priority > 0) p->priority--;
             process_requeue(p);
+        }
+    }
+}
+
+/* Extension: MLFQ anti-starvation. Reset everyone's priority to 0, and
+ * physically move anything sitting in a lower-priority queue up to
+ * queue 0 right now (not just whenever it's next (re)queued). */
+void process_boost_all(void) {
+    int i, level;
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state != TERMINATED) process_table[i].priority = 0;
+    }
+    for (level = 1; level < MLFQ_LEVELS; level++) {
+        pcb_t *p = ready_head[level];
+        ready_head[level] = 0;
+        ready_tail[level] = 0;
+        while (p) {
+            pcb_t *next = p->next;
+            enqueue_at(p, 0);
+            p = next;
         }
     }
 }
@@ -135,28 +167,21 @@ void process_do_fork(uint32_t parent_esp) {
         if (process_table[i].state == TERMINATED) { child = &process_table[i]; break; }
     }
     if (!child) {
-        current_process->fork_return_value = -1;   /* out of PCB slots */
+        current_process->fork_return_value = -1;
         return;
     }
 
-    /* Duplicate the ENTIRE stack byte-for-byte -- this copies every
-     * local variable, the pushad frame, and the EIP/CS/EFLAGS that
-     * `int $32` (inside fork()) just built on the parent's stack. */
     for (i = 0; i < STACK_SIZE / 4; i++) child->stack[i] = current_process->stack[i];
 
     child->pid             = next_pid++;
     child->thread_fn       = current_process->thread_fn;
     child->thread_arg      = current_process->thread_arg;
     child->fork_requested  = false;
-    child->fork_return_value = 0;      /* child sees fork() return 0 */
+    child->fork_return_value = 0;
     child->state           = READY;
     child->next            = 0;
+    child->priority        = 0;   /* MLFQ: a fresh process starts at the top */
 
-    /* The only pointer that needs translating: esp itself. Preserve
-     * the same DEPTH from the top of the stack, just measured against
-     * the child's own (differently located) stack array -- popad
-     * ignores the stale "saved ESP" slot pushad wrote, so that value
-     * doesn't need fixing up. */
     uint32_t parent_top = (uint32_t)&current_process->stack[STACK_SIZE / 4];
     uint32_t child_top   = (uint32_t)&child->stack[STACK_SIZE / 4];
     uint32_t depth       = parent_top - parent_esp;
@@ -164,14 +189,12 @@ void process_do_fork(uint32_t parent_esp) {
 
     process_requeue(child);
 
-    current_process->fork_return_value = (int)child->pid;   /* parent sees fork() return child's PID */
+    current_process->fork_return_value = (int)child->pid;
 }
 
 int fork(void) {
     if (!current_process) return -1;
     current_process->fork_requested = true;
     __asm__ __volatile__("int $32");
-    /* Resumed here as EITHER the parent or the child -- fork_return_value
-     * was set appropriately for whichever PCB we now are. */
     return current_process->fork_return_value;
 }

@@ -43,11 +43,24 @@ uint32_t scheduler_switch(uint32_t old_esp) {
          * before triggering this switch -- leave it OUT of the ready
          * queue; process_wake_ready() puts it back once its time is up. */
         if (current_process->state == RUNNING) {
+            /* MLFQ: using the FULL time slice (a normal preemption,
+             * not a voluntary sleep/block) is CPU-bound behaviour --
+             * demote it one level. */
+            if (current_process->priority < MLFQ_LEVELS - 1) {
+                current_process->priority++;
+            }
             process_requeue(current_process);
         }
     }
 
     process_wake_ready(tick_count);
+
+    /* MLFQ: anti-starvation. Every 500 ticks (5s at 100Hz), reset
+     * everyone back to the top priority so a long-running low-priority
+     * job can never be starved out forever by a stream of new arrivals. */
+    if (tick_count % 500 == 0) {
+        process_boost_all();
+    }
 
     pcb_t *next = process_next_ready();
     if (next) {
