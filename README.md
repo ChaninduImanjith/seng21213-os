@@ -537,3 +537,97 @@ of the time (they're asleep between prints), briefly flipping to
 **Lecture concept:** L09 §3 — process state transitions (this is the
 first place `BLOCKED` is actually used for something real, rather than
 mutex/semaphore's busy-wait-with-hlt approach from Stage 2).
+
+---
+
+## Bonus Extension — fork() (Duplicate PCB + Stack)
+
+**What was built:**
+- `pcb_t` gained `fork_requested` and `fork_return_value` fields.
+- `fork()` (in `process.c`) sets `fork_requested = true` on the calling
+  process, then forces a context switch with `int $32` -- this is the
+  only way to get a VALID, live snapshot of the caller's stack pointer
+  (a PCB's `esp` field is stale while that process is actively running;
+  it's only correct immediately after a context switch saves it).
+- `process_do_fork(parent_esp)`, called from inside `scheduler_switch()`
+  where `parent_esp` is that just-saved, valid pointer, does the actual
+  work: finds a free PCB, copies the ENTIRE stack array byte-for-byte
+  (every local variable and the pushad+iret frame `int $32` just built),
+  then translates `esp` -- the one pointer that strictly needs fixing
+  up, since it points into the PARENT's stack array in memory. The
+  translation preserves the same *depth* from the top of the stack, in
+  the CHILD's own (differently located) stack array. Everything else on
+  the copied stack (the stale "saved ESP" slot `pushad` wrote) doesn't
+  need fixing because `popad` never reads it back.
+- Each side is told which one it is via `fork_return_value`: `0` for
+  the child's copy, the new PID for the parent's original -- both
+  resume from the exact same point (right after `int $32` inside
+  `fork()`), just with different return values, matching real
+  UNIX `fork()` semantics.
+- `forktest` shell command demos it; the child calls `process_exit()`
+  immediately after printing, rather than falling back into
+  `shell_run()`'s loop and fighting the parent for the same keyboard
+  input.
+
+**How to test:**
+
+    make clean && make run
+
+Type `forktest` -- both a `[CHILD]` and `[PARENT]` message print (the
+parent showing the child's new PID), then the shell continues normally.
+
+**Design limitation:** since this kernel has no paging/virtual memory,
+a "perfect" `fork()` would need to scan the copied stack for any other
+pointer values that happen to reference addresses inside the parent's
+stack array and rewrite them too (e.g. a saved EBP frame-pointer chain
+crossing between locals). At `-O2`, GCC omits frame pointers for
+simple functions, so this doesn't come up for the `forktest` demo, but
+a `fork()` called from a deeply nested, complex call chain could
+break. A production kernel solves this with virtual memory instead
+(every process's stack lives at the same virtual address).
+
+**Lecture concept:** L09 §2 — process creation (specifically why only
+`esp` needs translating, and why `current_process->esp` is only valid
+right after a switch, not while a process is actively executing).
+
+---
+
+## Bonus Extension — MLFQ Scheduler (3 Priority Levels)
+
+**What was built:**
+- The single ready queue became an array of 3 (`ready_head[level]` /
+  `ready_tail[level]`, level 0 = highest priority). `pcb_t` gained a
+  `priority` field.
+- **Demote:** in `scheduler_switch()`, a process that used its FULL
+  time slice (a normal preemption, `state == RUNNING`, not a voluntary
+  block) gets `priority++` before being requeued -- CPU-bound
+  behaviour is penalised.
+- **Boost:** in `process_wake_ready()`, a process waking from a
+  voluntary `sleep_ms()`/block gets `priority--` before being
+  requeued -- I/O-bound/interactive behaviour is rewarded.
+- **Anti-starvation:** every 500 ticks (5s at 100Hz), `process_boost_all()`
+  resets every non-terminated process to priority 0 and physically
+  drains queues 1/2 back into queue 0, so a long-running low-priority
+  job can never be starved forever.
+- `cpuhog` shell command spawns a pure busy-loop process (never sleeps)
+  to demonstrate demotion; `ps` now shows a `PRIO` column.
+
+**How to test:**
+
+    make clean && make run
+
+Run `cpuhog` a couple of times, then `ps` repeatedly -- the cpuhog
+PIDs demote to priority 2 within a few ticks, while the existing
+`sleep_ms`-based demo processes (PID 2/3) stay boosted near priority 0.
+
+**Honest observation:** the interactive shell (PID 1) *also* demotes
+to priority 2 during normal use. This isn't a bug -- the keyboard
+driver is a busy-poll loop (Stage 0's design, interrupt-driven
+keyboard was never implemented), so from the scheduler's point of view
+"waiting for a keypress" looks identical to "burning CPU", and gets
+penalised the same way a real CPU-bound job would. A real interactive
+shell would need an interrupt-driven keyboard (or an explicit
+`sleep_ms(1)` between polls) to be correctly recognised as I/O-bound.
+
+**Lecture concept:** L09 §4 — scheduling algorithms (multi-level
+feedback queues, and the classic aging/starvation-prevention problem).
