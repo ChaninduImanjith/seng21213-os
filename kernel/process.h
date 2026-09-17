@@ -25,6 +25,15 @@ typedef struct pcb {
      * a sleep_ms() call. The scheduler wakes this process once
      * scheduler_ticks() reaches wake_tick. */
     uint32_t      wake_tick;
+
+    /* Extension: fork(). fork_requested is set by fork() right before
+     * forcing a context switch; process_do_fork() (called from inside
+     * scheduler_switch, where the parent's live esp is available)
+     * clears it and does the actual duplication. fork_return_value is
+     * what fork() hands back once this PCB resumes -- 0 for a child,
+     * the new PID for the parent. */
+    bool          fork_requested;
+    int           fork_return_value;
 } pcb_t;
 
 void   process_init(void);
@@ -42,5 +51,10 @@ pcb_t *process_next_ready(void);
 void   process_requeue(pcb_t *p);
 pcb_t *process_get(int index);
 void   process_wake_ready(uint32_t now);   /* requeue any BLOCKED process whose wake_tick has passed */
+
+/* Extension: fork(). process_do_fork() is called by scheduler_switch,
+ * not directly by user code -- call fork() instead. */
+void   process_do_fork(uint32_t parent_esp);
+int    fork(void);
 
 #endif

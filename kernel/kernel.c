@@ -18,6 +18,7 @@ static void cmd_mem(void);
 static void cmd_memtest(void);
 static void cmd_ls(void);
 static void cmd_ansi(void);
+static void cmd_forktest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -88,6 +89,7 @@ static void cmd_help(void) {
     vga_puts("  write    - write <file> <text> - write text to a file\n");
     vga_puts("  rm       - Remove a file\n");
     vga_puts("  ansi     - Demo ANSI escape-code colours\n");
+    vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -421,6 +423,23 @@ static void cmd_rm(const char *name) {
     }
 }
 
+static void cmd_forktest(void) {
+    vga_puts("\n  Calling fork()...\n");
+    int result = fork();
+    if (result == 0) {
+        /* Child: prove it is genuinely a separate process, then exit --
+         * otherwise it would fall back into shell_run's loop too,
+         * competing with the parent for the same keyboard input. */
+        vga_puts_color("  [CHILD]  fork() returned 0 -- I am the child. Exiting.\n",
+                       VGA_LIGHT_CYAN, VGA_BLACK);
+        process_exit();
+    } else if (result > 0) {
+        vga_printf("  [PARENT] fork() returned child PID %d -- shell continues normally.\n\n", result);
+    } else {
+        vga_puts_color("  [PARENT] fork() failed (out of process slots)\n\n", VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
 static void cmd_ansi(void) {
     vga_puts("\n");
     vga_puts_ansi("\x1b[31mRed \x1b[32mGreen \x1b[33mYellow \x1b[34mBlue \x1b[35mMagenta \x1b[36mCyan \x1b[37mWhite\x1b[0m\n");
@@ -457,6 +476,7 @@ static void shell_run(void) {
         if (k_strncmp(cmd, "write ", 6) == 0) { cmd_write(k_ltrim(cmd + 6));    continue; }
         if (k_strncmp(cmd, "rm ", 3)    == 0) { cmd_rm(k_ltrim(cmd + 3));       continue; }
         if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
+        if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));

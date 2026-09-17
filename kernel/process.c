@@ -120,3 +120,58 @@ void process_wake_ready(uint32_t now) {
         }
     }
 }
+
+/* Extension: fork(). Called from inside scheduler_switch(), where
+ * parent_esp is the parent's just-saved, VALID live stack pointer
+ * (current_process->esp is stale while a process is actively running
+ * -- this is only correct to read right after a context switch). */
+void process_do_fork(uint32_t parent_esp) {
+    if (!current_process || !current_process->fork_requested) return;
+    current_process->fork_requested = false;
+
+    pcb_t *child = 0;
+    int i;
+    for (i = 0; i < MAX_PROCESSES; i++) {
+        if (process_table[i].state == TERMINATED) { child = &process_table[i]; break; }
+    }
+    if (!child) {
+        current_process->fork_return_value = -1;   /* out of PCB slots */
+        return;
+    }
+
+    /* Duplicate the ENTIRE stack byte-for-byte -- this copies every
+     * local variable, the pushad frame, and the EIP/CS/EFLAGS that
+     * `int $32` (inside fork()) just built on the parent's stack. */
+    for (i = 0; i < STACK_SIZE / 4; i++) child->stack[i] = current_process->stack[i];
+
+    child->pid             = next_pid++;
+    child->thread_fn       = current_process->thread_fn;
+    child->thread_arg      = current_process->thread_arg;
+    child->fork_requested  = false;
+    child->fork_return_value = 0;      /* child sees fork() return 0 */
+    child->state           = READY;
+    child->next            = 0;
+
+    /* The only pointer that needs translating: esp itself. Preserve
+     * the same DEPTH from the top of the stack, just measured against
+     * the child's own (differently located) stack array -- popad
+     * ignores the stale "saved ESP" slot pushad wrote, so that value
+     * doesn't need fixing up. */
+    uint32_t parent_top = (uint32_t)&current_process->stack[STACK_SIZE / 4];
+    uint32_t child_top   = (uint32_t)&child->stack[STACK_SIZE / 4];
+    uint32_t depth       = parent_top - parent_esp;
+    child->esp = child_top - depth;
+
+    process_requeue(child);
+
+    current_process->fork_return_value = (int)child->pid;   /* parent sees fork() return child's PID */
+}
+
+int fork(void) {
+    if (!current_process) return -1;
+    current_process->fork_requested = true;
+    __asm__ __volatile__("int $32");
+    /* Resumed here as EITHER the parent or the child -- fork_return_value
+     * was set appropriately for whichever PCB we now are. */
+    return current_process->fork_return_value;
+}

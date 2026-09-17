@@ -30,6 +30,14 @@ uint32_t scheduler_switch(uint32_t old_esp) {
 
     if (current_process) {
         current_process->esp = old_esp;
+
+        /* Extension: fork(). old_esp is the parent's just-saved, VALID
+         * live stack pointer -- this is the only place it's safe to
+         * duplicate the stack from. */
+        if (current_process->fork_requested) {
+            process_do_fork(old_esp);
+        }
+
         /* Only requeue if it was actually still runnable. A process
          * that just called sleep_ms() set its own state to BLOCKED
          * before triggering this switch -- leave it OUT of the ready
