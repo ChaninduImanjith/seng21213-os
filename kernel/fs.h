@@ -6,9 +6,11 @@
 #define FS_MAGIC          0x21213F5
 #define FS_MAX_INODES     64
 #define FS_MAX_DIRENTS    64
-#define FS_DIRECT_BLOCKS  8
-#define FS_MAX_FILENAME   28
-#define FS_MAX_FILE_SIZE  (FS_DIRECT_BLOCKS * 4096)   /* 32 KB */
+#define FS_DIRECT_BLOCKS   8
+#define FS_INDIRECT_PTRS   1024
+#define FS_MAX_FILE_BLOCKS (FS_DIRECT_BLOCKS + FS_INDIRECT_PTRS)
+#define FS_MAX_FILENAME    28
+#define FS_MAX_FILE_SIZE   (FS_MAX_FILE_BLOCKS * 4096U) /* ~4 MB addressing */
 
 /* Fixed block numbers -- laid out exactly as the design diagram:
  * 0 = superblock, 1 = directory, 2 = block bitmap, 3 = inode bitmap,

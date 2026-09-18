@@ -757,3 +757,36 @@ Run `kmtest` -- expect `PASS: allocations isolated, data intact after free/reuse
 
 **Lecture concept:** L11 §5 — memory allocation strategies (variable-size
 heap allocation built on top of fixed-size physical frames).
+
+---
+
+## Bonus Extension — Single-Indirect Block Pointer
+
+**What was built:**
+- Extended each inode from 8 direct block pointers to 8 direct pointers plus
+  one single-indirect pointer block.
+- Files up to 32 KB use direct blocks only.
+- Beyond 32 KB, the indirect block stores up to 1024 additional 32-bit
+  RAM-disk block numbers.
+- The inode can theoretically address 4,227,072 bytes (~4.03 MiB), although
+  the current teaching RAM disk is only 1 MiB.
+- The indirect table is allocated lazily.
+- Truncate/unlink release direct blocks, indirect data blocks, and the
+  indirect-table block.
+- `cat` now uses a bounded display buffer instead of allocating the new
+  maximum file size in kernel BSS.
+
+**How to test:**
+
+    make clean && make run
+    indirecttest
+
+Expected:
+
+    PASS: 40KB+ write/read crossed direct -> indirect boundary
+    PASS: data verified byte-for-byte and blocks released on unlink
+
+The test writes 41,083 bytes, reads it back, verifies every byte, and then
+deletes the test file.
+
+**Lecture concept:** L12 §2 — i-node indirection / single-indirect block addressing.

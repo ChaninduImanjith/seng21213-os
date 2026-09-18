@@ -20,6 +20,14 @@ typedef struct {
 typedef struct {
     uint32_t size;
     uint32_t blocks[FS_DIRECT_BLOCKS];
+
+    /* L12 §2 -- single-indirect block.
+     * This block contains up to 1024 additional uint32_t block numbers.
+     * A value of 0 means no indirect table has been allocated yet. */
+    uint32_t indirect_block;
+
+    /* Number of DATA blocks used by this file.
+     * The indirect table block itself is metadata and is not counted here. */
     uint32_t block_count;
 } __attribute__((packed)) fs_inode_t;
 
@@ -86,6 +94,97 @@ static int find_free_block(void) {
     return -1;
 }
 
+/* Clear a complete 4 KB RAM-disk block. */
+static void zero_block(uint32_t block_num) {
+    uint8_t *p = (uint8_t *)ramdisk_block_ptr(block_num);
+    uint32_t i;
+    for (i = 0; i < RD_BLOCK_SIZE; i++) p[i] = 0;
+}
+
+/* Translate a file's logical block index into a RAM-disk block number.
+ *
+ *   0..7     -> inode->blocks[]       (direct)
+ *   8..1031  -> entries stored in the indirect block
+ */
+static uint32_t inode_get_block(fs_inode_t *inode, uint32_t index) {
+    if (index < FS_DIRECT_BLOCKS) {
+        return inode->blocks[index];
+    }
+
+    index -= FS_DIRECT_BLOCKS;
+
+    if (index >= FS_INDIRECT_PTRS || inode->indirect_block == 0) {
+        return 0;
+    }
+
+    uint32_t *table =
+        (uint32_t *)ramdisk_block_ptr(inode->indirect_block);
+
+    return table[index];
+}
+
+/* Store a logical -> physical block mapping.
+ * Allocates the indirect pointer table lazily when block 8 is reached. */
+static int inode_set_block(fs_inode_t *inode,
+                           uint32_t index,
+                           uint32_t block_num) {
+    if (index < FS_DIRECT_BLOCKS) {
+        inode->blocks[index] = block_num;
+        return 0;
+    }
+
+    index -= FS_DIRECT_BLOCKS;
+
+    if (index >= FS_INDIRECT_PTRS) {
+        return -1;
+    }
+
+    if (inode->indirect_block == 0) {
+        int table_block = find_free_block();
+
+        if (table_block < 0) {
+            return -1;
+        }
+
+        block_bitmap()[table_block] = 1;
+        inode->indirect_block = (uint32_t)table_block;
+        zero_block((uint32_t)table_block);
+    }
+
+    uint32_t *table =
+        (uint32_t *)ramdisk_block_ptr(inode->indirect_block);
+
+    table[index] = block_num;
+    return 0;
+}
+
+/* Release all DATA blocks plus the indirect-table block itself. */
+static void inode_release_blocks(fs_inode_t *inode) {
+    uint8_t *bbmap = block_bitmap();
+    uint32_t i;
+
+    for (i = 0; i < inode->block_count; i++) {
+        uint32_t blk = inode_get_block(inode, i);
+
+        if (blk >= FS_DATA_START_NUM && blk < RD_TOTAL_BLOCKS) {
+            bbmap[blk] = 0;
+        }
+    }
+
+    if (inode->indirect_block >= FS_DATA_START_NUM &&
+        inode->indirect_block < RD_TOTAL_BLOCKS) {
+        bbmap[inode->indirect_block] = 0;
+    }
+
+    for (i = 0; i < FS_DIRECT_BLOCKS; i++) {
+        inode->blocks[i] = 0;
+    }
+
+    inode->indirect_block = 0;
+    inode->block_count = 0;
+    inode->size = 0;
+}
+
 void fs_init(void) {
     int i;
     ramdisk_init();
@@ -101,6 +200,19 @@ void fs_init(void) {
 
     uint8_t *ibmap = inode_bitmap();
     for (i = 0; i < FS_MAX_INODES; i++) ibmap[i] = 0;
+
+    /* Reset every inode, including the new indirect pointer. */
+    fs_inode_t *inodes = inode_table();
+    for (i = 0; i < FS_MAX_INODES; i++) {
+        int j;
+        inodes[i].size = 0;
+        inodes[i].block_count = 0;
+        inodes[i].indirect_block = 0;
+
+        for (j = 0; j < FS_DIRECT_BLOCKS; j++) {
+            inodes[i].blocks[j] = 0;
+        }
+    }
 
     /* Blocks 0..FS_DATA_START_NUM-1 are metadata -- permanently "used"
      * so a file's data can never overwrite the superblock/directory/etc. */
@@ -126,8 +238,15 @@ int fs_write(const char *name, const char *data, uint32_t len) {
         dir[dslot].inode = inum;
 
         fs_inode_t *inode = &inode_table()[inum];
+        uint32_t j;
+
         inode->size = 0;
         inode->block_count = 0;
+        inode->indirect_block = 0;
+
+        for (j = 0; j < FS_DIRECT_BLOCKS; j++) {
+            inode->blocks[j] = 0;
+        }
     } else {
         inum = dir[dslot].inode;
     }
@@ -135,11 +254,9 @@ int fs_write(const char *name, const char *data, uint32_t len) {
     fs_inode_t *inode = &inode_table()[inum];
     uint8_t *bbmap = block_bitmap();
 
-    /* Truncate: free whatever data blocks this file already had. */
-    uint32_t i;
-    for (i = 0; i < inode->block_count; i++) bbmap[inode->blocks[i]] = 0;
-    inode->block_count = 0;
-    inode->size = 0;
+    /* Truncate: release direct blocks, indirect data blocks,
+     * and the indirect table itself. */
+    inode_release_blocks(inode);
 
     if (len > FS_MAX_FILE_SIZE) len = FS_MAX_FILE_SIZE;
 
@@ -148,13 +265,25 @@ int fs_write(const char *name, const char *data, uint32_t len) {
         int blk = find_free_block();
         if (blk < 0) break;                    /* disk full */
         bbmap[blk] = 1;
-        inode->blocks[inode->block_count++] = (uint32_t)blk;
+
+        /* Direct for blocks 0..7; indirect from block 8 onward. */
+        if (inode_set_block(inode,
+                            inode->block_count,
+                            (uint32_t)blk) < 0) {
+            bbmap[blk] = 0;
+            break;
+        }
 
         uint8_t *dst = (uint8_t *)ramdisk_block_ptr((uint32_t)blk);
         uint32_t chunk = len - written;
         if (chunk > RD_BLOCK_SIZE) chunk = RD_BLOCK_SIZE;
+
         uint32_t j;
-        for (j = 0; j < chunk; j++) dst[j] = (uint8_t)data[written + j];
+        for (j = 0; j < chunk; j++) {
+            dst[j] = (uint8_t)data[written + j];
+        }
+
+        inode->block_count++;
         written += chunk;
     }
 
@@ -174,7 +303,10 @@ int fs_read(const char *name, char *buf, uint32_t maxlen) {
 
     uint32_t copied = 0, i;
     for (i = 0; i < inode->block_count && copied < total; i++) {
-        uint8_t *src = (uint8_t *)ramdisk_block_ptr(inode->blocks[i]);
+        uint32_t blk = inode_get_block(inode, i);
+        if (blk == 0) break;
+
+        uint8_t *src = (uint8_t *)ramdisk_block_ptr(blk);
         uint32_t chunk = total - copied;
         if (chunk > RD_BLOCK_SIZE) chunk = RD_BLOCK_SIZE;
         uint32_t j;
@@ -191,12 +323,7 @@ int fs_unlink(const char *name) {
     fs_dirent_t *dir = dir_table();
     int inum = dir[dslot].inode;
     fs_inode_t *inode = &inode_table()[inum];
-    uint8_t *bbmap = block_bitmap();
-
-    uint32_t i;
-    for (i = 0; i < inode->block_count; i++) bbmap[inode->blocks[i]] = 0;
-    inode->block_count = 0;
-    inode->size = 0;
+    inode_release_blocks(inode);
 
     inode_bitmap()[inum] = 0;
     dir[dslot].inode = -1;

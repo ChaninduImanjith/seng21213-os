@@ -28,6 +28,7 @@ static void cmd_rwlocktest(void);
 static void cmd_deadlocktest(void);
 static void cmd_deadlockcheck(void);
 static void cmd_kmalloctest(void);
+static void cmd_indirecttest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -105,6 +106,7 @@ static void cmd_help(void) {
     vga_puts("  deadlocktest  - Spawn a classic AB-BA deadlock\n");
     vga_puts("  deadlockcheck - Scan the resource graph for a deadlock\n");
     vga_puts("  kmtest        - Demo kmalloc/kfree heap allocator\n");
+    vga_puts("  indirecttest  - Test Stage 4 single-indirect file blocks (>32KB)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -401,16 +403,36 @@ static void cmd_touch(const char *name) {
 }
 
 static void cmd_cat(const char *name) {
-    static char buf[FS_MAX_FILE_SIZE + 1];
-    if (k_strlen(name) == 0) { vga_puts("  Usage: cat <file>\n"); return; }
-    int n = fs_read(name, buf, FS_MAX_FILE_SIZE);
+    /* Do NOT size this buffer with FS_MAX_FILE_SIZE. With the indirect
+     * extension that value is ~4MB and would make the kernel .bss overlap
+     * physical regions used elsewhere. The shell only needs a text preview. */
+    static char buf[4096];
+
+    if (k_strlen(name) == 0) {
+        vga_puts("  Usage: cat <file>\n");
+        return;
+    }
+
+    uint32_t file_size = fs_size(name);
+    if (file_size == (uint32_t)-1) {
+        vga_puts_color("  File not found\n", VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    int n = fs_read(name, buf, sizeof(buf) - 1);
     if (n < 0) {
         vga_puts_color("  File not found\n", VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
+
     buf[n] = 0;
     vga_puts("  ");
     vga_puts(buf);
+
+    if (file_size > (uint32_t)n) {
+        vga_puts("\n  [cat output truncated to 4095 bytes]");
+    }
+
     vga_puts("\n");
 }
 
@@ -436,6 +458,102 @@ static void cmd_rm(const char *name) {
     } else {
         vga_puts("  OK\n");
     }
+}
+
+/* Stage 4 bonus: single-indirect inode test.
+ *
+ * 40KB + 123 bytes crosses the old 32KB direct-block limit:
+ *   first 8 blocks  -> inode direct pointers
+ *   remaining data -> single-indirect pointer table
+ *
+ * One static buffer is reused for both write and read verification so the
+ * test does not require a large kernel stack allocation.
+ */
+#define INDIRECT_TEST_SIZE (40U * 1024U + 123U)
+
+static uint8_t indirect_test_buf[INDIRECT_TEST_SIZE];
+
+static uint8_t indirect_test_pattern(uint32_t i) {
+    return (uint8_t)((i * 37U + 11U) & 0xFFU);
+}
+
+static void cmd_indirecttest(void) {
+    const char *name = "indirect.bin";
+    uint32_t i;
+    int n;
+
+    vga_puts_color("\n  Single-indirect block test\n",
+                   VGA_LIGHT_CYAN, VGA_BLACK);
+    vga_puts("  -----------------------------------------------\n");
+    vga_printf("  Test size: %u bytes (> 32768 direct limit)\n",
+               (uint32_t)INDIRECT_TEST_SIZE);
+
+    /* Remove leftovers from a previous interrupted test. */
+    fs_unlink(name);
+
+    /* Generate deterministic binary data. */
+    for (i = 0; i < INDIRECT_TEST_SIZE; i++) {
+        indirect_test_buf[i] = indirect_test_pattern(i);
+    }
+
+    n = fs_write(name,
+                 (const char *)indirect_test_buf,
+                 (uint32_t)INDIRECT_TEST_SIZE);
+
+    if (n != (int)INDIRECT_TEST_SIZE) {
+        vga_printf("  FAIL: write returned %d bytes\n", n);
+        fs_unlink(name);
+        return;
+    }
+
+    if (fs_size(name) != (uint32_t)INDIRECT_TEST_SIZE) {
+        vga_puts_color("  FAIL: file size mismatch\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_unlink(name);
+        return;
+    }
+
+    /* Destroy the original contents before reading them back. */
+    for (i = 0; i < INDIRECT_TEST_SIZE; i++) {
+        indirect_test_buf[i] = 0;
+    }
+
+    n = fs_read(name,
+                (char *)indirect_test_buf,
+                (uint32_t)INDIRECT_TEST_SIZE);
+
+    if (n != (int)INDIRECT_TEST_SIZE) {
+        vga_printf("  FAIL: read returned %d bytes\n", n);
+        fs_unlink(name);
+        return;
+    }
+
+    for (i = 0; i < INDIRECT_TEST_SIZE; i++) {
+        if (indirect_test_buf[i] != indirect_test_pattern(i)) {
+            vga_printf("  FAIL: data mismatch at byte %u\n", i);
+            fs_unlink(name);
+            return;
+        }
+    }
+
+    if (fs_unlink(name) < 0) {
+        vga_puts_color("  FAIL: could not unlink test file\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (fs_size(name) != (uint32_t)-1) {
+        vga_puts_color("  FAIL: inode still visible after unlink\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    vga_puts_color(
+        "  PASS: 40KB+ write/read crossed direct -> indirect boundary\n",
+        VGA_LIGHT_GREEN, VGA_BLACK);
+    vga_puts_color(
+        "  PASS: data verified byte-for-byte and blocks released on unlink\n\n",
+        VGA_LIGHT_GREEN, VGA_BLACK);
 }
 
 /* Extension: priority inheritance demo state. */
@@ -709,6 +827,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "deadlocktest") == 0) { cmd_deadlocktest(); continue; }
         if (k_strcmp(cmd, "deadlockcheck") == 0) { cmd_deadlockcheck(); continue; }
         if (k_strcmp(cmd, "kmtest") == 0) { cmd_kmalloctest(); continue; }
+        if (k_strcmp(cmd, "indirecttest") == 0) { cmd_indirecttest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));

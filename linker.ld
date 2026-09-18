@@ -8,36 +8,60 @@
  * ============================================================================*/
 
 OUTPUT_FORMAT(elf32-i386)
-
 ENTRY(_start)
 
-SECTIONS {
-    . = 0x10000;          /* Load address must match bootloader's jump target */
+/* Give each class of section appropriate ELF permissions.
+ *
+ * text   : read + execute
+ * rodata : read only
+ * data   : read + write
+ *
+ * This removes the linker warning about an RWX LOAD segment.
+ */
+PHDRS
+{
+    text   PT_LOAD FLAGS(5);   /* PF_R | PF_X */
+    rodata PT_LOAD FLAGS(4);   /* PF_R        */
+    data   PT_LOAD FLAGS(6);   /* PF_R | PF_W */
+}
 
-    .text : {
-        *(.text)          /* All code sections */
-    }
+SECTIONS
+{
+    . = 0x10000;          /* Must match bootloader load/jump address */
 
-    .rodata : {
-        *(.rodata*)       /* Read-only data (string literals, const tables) */
-    }
+    .text :
+    {
+        *(.text)
+        *(.text.*)
+    } :text
 
-    .data : {
-        *(.data)          /* Initialised global/static variables */
-    }
+    .rodata :
+    {
+        *(.rodata)
+        *(.rodata.*)
+    } :rodata
 
-    .bss : {
+    .data :
+    {
+        *(.data)
+        *(.data.*)
+    } :data
+
+    .bss :
+    {
         *(COMMON)
-        *(.bss)           /* Uninitialised data – zeroed by convention */
-    }
+        *(.bss)
+        *(.bss.*)
+    } :data
 
-    /* Stage 3: marks the first byte of physical memory NOT used by the
-     * kernel image. pmm_init() must never hand out a frame below this
-     * address, or the allocator could overwrite kernel code/data. */
+    /* Stage 3: first byte of physical memory NOT occupied by kernel. */
     kernel_end = .;
 
-    /DISCARD/ : {
-        *(.eh_frame)      /* Exception frames – not needed in a bare kernel */
+    /DISCARD/ :
+    {
+        *(.eh_frame)
+        *(.eh_frame.*)
         *(.comment)
+        *(.note.GNU-stack)
     }
 }
