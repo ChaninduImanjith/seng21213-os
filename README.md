@@ -698,3 +698,34 @@ overlap; the writer only gets in afterward.
 **Lecture concept:** L10 §5 — concurrency patterns (specifically the
 readers-writers problem and the classic starvation failure mode a
 naive implementation has).
+
+---
+
+## Bonus Extension — Deadlock Detector (Resource-Allocation Graph, DFS)
+
+**What was built:**
+- `kernel/deadlock.h`/`.c` -- an opt-in resource-allocation graph
+  tracker: `deadlock_register_resource()`, `deadlock_note_owner()`,
+  `deadlock_note_waiting()`, `deadlock_note_done_waiting()`, and
+  `deadlock_check()`.
+- `deadlock_check()` walks the graph from every waiting process:
+  process -> resource it wants -> that resource's owner -> the
+  resource THAT owner wants -> ... If the chain loops back to the
+  starting process, that is a cycle -- a deadlock.
+- `deadlocktest` shell command spawns a classic AB-BA deadlock: T1
+  locks A then wants B, T2 locks B then wants A. `deadlockcheck` scans
+  the graph and reports whether a cycle exists.
+- `process_index_of()` (added to `process.c`) maps a PCB pointer back
+  to its slot in the process table, so the detector can key its
+  wait-for graph cheaply.
+
+**How to test:**
+
+    make clean && make run
+
+Run `deadlocktest`, wait a moment for both threads to block, then run
+`deadlockcheck` -- it reports "DEADLOCK DETECTED".
+
+**Lecture concept:** L11 §2 — Coffman conditions (mutual exclusion,
+hold-and-wait, no preemption, circular wait -- this demo constructs
+all four deliberately to trigger the cycle the detector is built to find).
