@@ -1007,3 +1007,51 @@ The VGA console keeps a 100-line scrollback history.
 - `Page Up` / `Page Down` browse previous console output.
 - `F11` / `F12` provide QEMU/laptop-friendly scroll-up and scroll-down controls.
 - Typing another key automatically returns to the live shell view.
+
+---
+
+## Bonus Extension — GRUB2 Multiboot Boot Support
+
+**What was built:**
+- Added a Multiboot v1 header recognized by GRUB2.
+- Added a separate GRUB-linked kernel image at the conventional 1 MiB
+  load address.
+- Preserved the original custom BIOS bootloader as an alternative boot path.
+- Added a kernel-owned flat GDT so both the custom loader and GRUB enter
+  the kernel with the same segment layout.
+- Added a kernel-owned 16 KiB stack.
+- Added Multiboot memory-map support:
+  - GRUB passes its memory information through the Multiboot structure.
+  - The kernel converts it into the E820-style format already consumed by
+    the physical memory manager.
+- Added Makefile targets:
+  - `make grub-check`
+  - `make grub-iso`
+  - `make run-grub`
+
+**Verification:**
+
+    make grub-check
+
+Expected:
+
+    GRUB2 recognizes build/kernel-grub.elf as x86 Multiboot
+
+Build and boot:
+
+    make grub-iso
+    make run-grub
+
+Successful GRUB boot displays:
+
+    [BOOT] GRUB2 Multiboot detected - memory map imported
+
+The normal kernel shell then starts and all existing subsystem tests can be
+run through the GRUB boot path.
+
+**Boot paths:**
+
+    Custom BIOS loader -> kernel at 0x10000
+    GRUB2 Multiboot    -> kernel ELF at 0x100000
+
+Both paths enter the same kernel code.

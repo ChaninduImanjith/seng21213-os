@@ -14,6 +14,7 @@
 #include "fs.h"
 #include "vfs.h"
 #include "journal.h"
+#include "multiboot.h"
 #include "../include/types.h"
 
 static void cmd_help(void);
@@ -1403,10 +1404,26 @@ static void shell_run(void) {
 /* ---------------------------------------------------------------------------
  * Kernel entry point - called from kernel_entry.asm
  * --------------------------------------------------------------------------*/
-void kernel_main(void) {
+void kernel_main(uint32_t boot_magic, uint32_t boot_info) {
+    int grub_boot;
+
+    /* GRUB cannot execute our real-mode BIOS E820 routine, so import its
+     * Multiboot memory map into the same buffer pmm_init() already uses.
+     * On the custom boot path this simply returns 0 and leaves BIOS E820
+     * data untouched.
+     */
+    grub_boot = multiboot_prepare_memory_map(boot_magic, boot_info);
+
     vga_init();
     kb_init();
     print_splash();
+
+    if (grub_boot > 0) {
+        vga_puts_color(
+            "\n  [BOOT] GRUB2 Multiboot detected - memory map imported\n",
+            VGA_LIGHT_GREEN,
+            VGA_BLACK);
+    }
 
     pmm_init();
     kmalloc_init();

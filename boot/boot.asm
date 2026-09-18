@@ -90,7 +90,11 @@ init_pm32:
     mov  ebp, 0x90000
     mov  esp, ebp
 
-    ; Jump to the kernel entry point (loaded at 0x10000)
+    ; Jump to the kernel entry point (loaded at 0x10000).
+    ; EAX/EBX = 0 tells kernel_entry.asm this is the custom boot path,
+    ; not a GRUB Multiboot invocation.
+    xor  eax, eax
+    xor  ebx, ebx
     call 0x10000
 
     ; Should never return, but halt if it does

@@ -60,6 +60,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/deadlock.c \
                    kernel/kmalloc.c \
                    kernel/pmm.c \
+                   kernel/multiboot.c \
                    kernel/buddy.c \
                    kernel/ramdisk.c \
                    kernel/journal.c \
@@ -88,10 +89,14 @@ KERNEL_ELF     := build/kernel.elf
 KERNEL_BIN     := build/kernel.bin
 OS_IMAGE       := seng21213-os.img
 
+GRUB_ELF       := build/kernel-grub.elf
+GRUB_ISO       := build/seng21213-os-grub.iso
+GRUB_ROOT      := build/grub-root
+
 # ---------------------------------------------------------------------------
 # Default target
 # ---------------------------------------------------------------------------
-.PHONY: all clean run run-debug info
+.PHONY: all clean run run-debug info grub-check grub-iso run-grub
 
 all: $(OS_IMAGE)
 	@echo ""
@@ -168,6 +173,40 @@ run: $(OS_IMAGE)
 run-debug: $(OS_IMAGE)
 	$(QEMU) $(QEMUFLAGS) -S -gdb tcp::1234 &
 	@echo "  QEMU paused. Connect GDB: target remote :1234"
+
+
+# ---------------------------------------------------------------------------
+# GRUB2 / Multiboot build
+# ---------------------------------------------------------------------------
+$(GRUB_ELF): $(KERNEL_ASM_OBJ) build/isr.o $(KERNEL_C_OBJS) linker-grub.ld
+	@echo "  [LD-GRUB]  $@"
+	$(LD) $(LDFLAGS) -T linker-grub.ld \
+		$(KERNEL_ASM_OBJ) build/isr.o $(KERNEL_C_OBJS) -o $@
+
+grub-check: $(GRUB_ELF)
+	@grub2-file --is-x86-multiboot $(GRUB_ELF)
+	@echo "  ✓  GRUB2 recognizes $(GRUB_ELF) as x86 Multiboot"
+
+grub-iso: grub-check
+	@rm -rf $(GRUB_ROOT)
+	@mkdir -p $(GRUB_ROOT)/boot/grub
+	@cp $(GRUB_ELF) $(GRUB_ROOT)/boot/kernel-grub.elf
+	@printf '%s\n' \
+		'set timeout=-1' \
+		'set default=0' \
+		'' \
+		'menuentry "SENG21213-OS (Multiboot)" {' \
+		'    multiboot /boot/kernel-grub.elf' \
+		'    boot' \
+		'}' \
+		> $(GRUB_ROOT)/boot/grub/grub.cfg
+	@echo "  [GRUB] Creating $(GRUB_ISO)..."
+	grub2-mkrescue -o $(GRUB_ISO) $(GRUB_ROOT)
+	@echo "  ✓  GRUB ISO ready -> $(GRUB_ISO)"
+
+run-grub: grub-iso
+	@echo "  Starting GRUB2 Multiboot QEMU..."
+	$(QEMU) -cdrom $(GRUB_ISO) -m 32M
 
 info:
 	@echo "Toolchain: CC=$(CC)  AS=$(AS)  LD=$(LD)"
