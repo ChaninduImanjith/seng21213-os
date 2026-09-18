@@ -79,6 +79,49 @@ uint32_t pmm_alloc_frame(void) {
     return 0;   /* out of memory -- frame 0 is always reserved, so 0 is a safe "failure" sentinel */
 }
 
+
+/* Allocate a physically contiguous run of frames.
+ *
+ * Buddy allocation needs one aligned pool so XOR-based buddy calculations
+ * remain inside the same pool. The returned range is immediately marked
+ * used in the PMM bitmap and therefore cannot be handed to kmalloc().
+ */
+uint32_t pmm_alloc_contiguous(uint32_t frame_count,
+                              uint32_t alignment_frames) {
+    uint32_t start;
+    uint32_t i;
+
+    if (frame_count == 0) return 0;
+    if (alignment_frames == 0) alignment_frames = 1;
+    if (frame_count > total_frames) return 0;
+
+    for (start = 0;
+         start + frame_count <= total_frames;
+         start++) {
+
+        if ((start % alignment_frames) != 0) {
+            continue;
+        }
+
+        for (i = 0; i < frame_count; i++) {
+            if (bitmap_test(start + i)) {
+                break;
+            }
+        }
+
+        if (i == frame_count) {
+            for (i = 0; i < frame_count; i++) {
+                bitmap_set(start + i);
+            }
+
+            free_count -= frame_count;
+            return start * FRAME_SIZE;
+        }
+    }
+
+    return 0;
+}
+
 void pmm_free_frame(uint32_t phys_addr) {
     uint32_t frame = phys_addr / FRAME_SIZE;
     if (frame >= total_frames) return;

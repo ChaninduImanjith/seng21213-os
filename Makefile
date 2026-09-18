@@ -60,6 +60,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/deadlock.c \
                    kernel/kmalloc.c \
                    kernel/pmm.c \
+                   kernel/buddy.c \
                    kernel/ramdisk.c \
                    kernel/fs.c \
                    kernel/vfs.c
@@ -136,6 +137,11 @@ $(KERNEL_ELF): $(KERNEL_ASM_OBJ) build/isr.o $(KERNEL_C_OBJS)
 $(KERNEL_BIN): $(KERNEL_ELF)
 	@echo "  [OBJCOPY] $@"
 	objcopy -O binary $< $@
+	@size=$$(wc -c < $@); max=$$((96 * 512)); \
+	if [ $$size -gt $$max ]; then \
+		echo "ERROR: kernel.bin is $$size bytes but bootloader loads only $$max bytes"; \
+		exit 1; \
+	fi
 
 # ---------------------------------------------------------------------------
 # Disk image: 1.44 MB floppy (boot sector + kernel)

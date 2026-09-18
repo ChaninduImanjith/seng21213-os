@@ -9,6 +9,7 @@
 #include "rwlock.h"
 #include "deadlock.h"
 #include "kmalloc.h"
+#include "buddy.h"
 #include "ramdisk.h"
 #include "fs.h"
 #include "vfs.h"
@@ -29,6 +30,7 @@ static void cmd_rwlocktest(void);
 static void cmd_deadlocktest(void);
 static void cmd_deadlockcheck(void);
 static void cmd_kmalloctest(void);
+static void cmd_buddytest(void);
 static void cmd_indirecttest(void);
 static void cmd_mkdir(const char *name);
 static void cmd_cd(const char *name);
@@ -117,6 +119,7 @@ static void cmd_help(void) {
     vga_puts("  deadlocktest  - Spawn a classic AB-BA deadlock\n");
     vga_puts("  deadlockcheck - Scan the resource graph for a deadlock\n");
     vga_puts("  kmtest        - Demo kmalloc/kfree heap allocator\n");
+    vga_puts("  buddytest     - Test buddy split/coalesce allocator\n");
     vga_puts("  indirecttest  - Test Stage 4 single-indirect file blocks (>32KB)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
@@ -967,6 +970,130 @@ static void dl_thread2(void *arg) {
     mutex_unlock(&dl_mutex_b);
 }
 
+
+static void cmd_buddytest(void) {
+    void *a;
+    void *b;
+    void *c;
+    void *whole;
+    uint32_t base = buddy_pool_base();
+
+    vga_puts_color("\n  Buddy allocator test\n",
+                   VGA_LIGHT_CYAN,
+                   VGA_BLACK);
+    vga_puts("  -----------------------------------------------\n");
+
+    if (!base) {
+        vga_puts_color(
+            "  FAIL: buddy pool could not be reserved from PMM\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    vga_puts("  Pool base: ");
+    vga_printf("0x%x\n", base);
+
+    if (buddy_free_pages() != BUDDY_POOL_PAGES ||
+        buddy_free_block_count(BUDDY_MAX_ORDER) != 1) {
+        vga_puts_color(
+            "  FAIL: initial 1 MiB buddy pool is not fully coalesced\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    a = buddy_alloc(0);   /*  4 KiB */
+    b = buddy_alloc(1);   /*  8 KiB */
+    c = buddy_alloc(2);   /* 16 KiB */
+
+    if (!a || !b || !c) {
+        vga_puts_color(
+            "  FAIL: split allocation returned NULL\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+
+        if (c) buddy_free(c, 2);
+        if (b) buddy_free(b, 1);
+        if (a) buddy_free(a, 0);
+        return;
+    }
+
+    if (buddy_free_pages() !=
+        BUDDY_POOL_PAGES - 1U - 2U - 4U) {
+        vga_puts_color(
+            "  FAIL: buddy free-page accounting incorrect\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+
+        buddy_free(c, 2);
+        buddy_free(b, 1);
+        buddy_free(a, 0);
+        return;
+    }
+
+    /* Touch the allocated memory to prove each returned block is usable. */
+    ((volatile uint32_t *)a)[0] = 0x11111111U;
+    ((volatile uint32_t *)b)[0] = 0x22222222U;
+    ((volatile uint32_t *)c)[0] = 0x33333333U;
+
+    ((volatile uint32_t *)a)[(4096U / 4U) - 1U] =
+        0xAAAAAAAAU;
+
+    ((volatile uint32_t *)b)[(8192U / 4U) - 1U] =
+        0xBBBBBBBBU;
+
+    ((volatile uint32_t *)c)[(16384U / 4U) - 1U] =
+        0xCCCCCCCCU;
+
+    if (buddy_free(c, 2) < 0 ||
+        buddy_free(b, 1) < 0 ||
+        buddy_free(a, 0) < 0) {
+        vga_puts_color(
+            "  FAIL: buddy_free rejected a valid block\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    if (buddy_free_pages() != BUDDY_POOL_PAGES ||
+        buddy_free_block_count(BUDDY_MAX_ORDER) != 1) {
+        vga_puts_color(
+            "  FAIL: buddies did not coalesce back to order 8\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    /*
+     * Final proof of coalescing: after freeing the small blocks, the
+     * allocator must once again satisfy one full 1 MiB order-8 request.
+     */
+    whole = buddy_alloc(BUDDY_MAX_ORDER);
+
+    if (!whole || (uint32_t)whole != base) {
+        vga_puts_color(
+            "  FAIL: full order-8 block was not reconstructed\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+
+        if (whole) buddy_free(whole, BUDDY_MAX_ORDER);
+        return;
+    }
+
+    buddy_free(whole, BUDDY_MAX_ORDER);
+
+    vga_puts_color(
+        "  PASS: order-0/1/2 allocations split larger buddy blocks\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+
+    vga_puts_color(
+        "  PASS: free blocks coalesced back into one 1 MiB order-8 block\n\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+}
+
 static void cmd_kmalloctest(void) {
     vga_puts("\n  kmalloc/kfree test...\n");
     char *a = (char *)kmalloc(32);
@@ -1126,6 +1253,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "deadlocktest") == 0) { cmd_deadlocktest(); continue; }
         if (k_strcmp(cmd, "deadlockcheck") == 0) { cmd_deadlockcheck(); continue; }
         if (k_strcmp(cmd, "kmtest") == 0) { cmd_kmalloctest(); continue; }
+        if (k_strcmp(cmd, "buddytest") == 0) { cmd_buddytest(); continue; }
         if (k_strcmp(cmd, "indirecttest") == 0) { cmd_indirecttest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
@@ -1158,6 +1286,7 @@ void kernel_main(void) {
     kmalloc_init();
     fs_init();
     vfs_init();
+    buddy_init();
     mutex_init(&myglobal_mutex);
 
     process_init();

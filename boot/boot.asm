@@ -31,8 +31,9 @@ start:
     call print_rm
 
 ; ---------------------------------------------------------------------------
-; Load kernel: read sectors 2..65 from disk into memory at 0x1000:0x0000
-; This gives us 64 × 512 = 32 768 bytes for the kernel (Stage 0)
+; Load kernel from disk into memory at 0x1000:0x0000.
+; 96 sectors × 512 bytes = 48 KiB kernel load window.
+; The larger window leaves room for later kernel extensions.
 ; ---------------------------------------------------------------------------
 load_kernel:
     mov  bx, 0x1000        ; ES:BX = 0x10000 (kernel load address)
@@ -40,7 +41,7 @@ load_kernel:
     xor  bx, bx
 
     mov  ah, 0x02          ; BIOS read sectors
-    mov  al, 64            ; Number of sectors to read
+    mov  al, 96            ; Number of sectors to read (48 KiB load window)
     mov  ch, 0             ; Cylinder 0
     mov  cl, 2             ; Start from sector 2 (sector 1 is MBR)
     mov  dh, 0             ; Head 0

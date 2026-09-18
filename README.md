@@ -896,3 +896,48 @@ Regression tests:
 Both tests should continue to pass through the VFS layer.
 
 **Lecture concept:** L12 §3 — Virtual File System design.
+
+---
+
+## Bonus Extension — Buddy Physical-Memory Allocator
+
+**What was built:**
+- Added a buddy allocator in `kernel/buddy.c` and `kernel/buddy.h`.
+- Reserved a 1 MiB aligned physical-memory pool from the existing PMM.
+- The pool contains 256 pages of 4 KiB each.
+- Supports allocation orders 0 through 8:
+  - order 0 = 4 KiB
+  - order 1 = 8 KiB
+  - order 2 = 16 KiB
+  - ...
+  - order 8 = 1 MiB
+- Larger blocks are recursively split when a smaller allocation is needed.
+- On free, the allocator calculates the matching buddy using XOR and
+  recursively coalesces matching free blocks.
+- Added `pmm_alloc_contiguous()` to reserve an aligned contiguous region
+  from the existing bitmap PMM.
+- The existing bitmap PMM and `kmalloc/kfree` heap remain operational.
+
+**How to test:**
+
+    buddytest
+
+Expected:
+
+    PASS: order-0/1/2 allocations split larger buddy blocks
+    PASS: free blocks coalesced back into one 1 MiB order-8 block
+
+Regression tests:
+
+    memtest
+    kmtest
+
+Both existing memory-management tests should continue to pass.
+
+**Bootloader note:**
+Adding the buddy allocator increased the kernel above the original 32 KiB
+bootloader load window. The loader was therefore expanded from 64 sectors
+to 96 sectors (48 KiB), and the Makefile now checks that `kernel.bin`
+does not silently exceed that configured limit.
+
+**Lecture concept:** Stage 3 — buddy allocator / physical memory management.
