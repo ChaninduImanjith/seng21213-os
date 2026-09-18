@@ -20,6 +20,7 @@ static void cmd_ls(void);
 static void cmd_ansi(void);
 static void cmd_forktest(void);
 static void cmd_cpuhog(void);
+static void cmd_priotest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -92,6 +93,7 @@ static void cmd_help(void) {
     vga_puts("  ansi     - Demo ANSI escape-code colours\n");
     vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
     vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
+    vga_puts("  priotest - Demo mutex priority inheritance\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -425,6 +427,66 @@ static void cmd_rm(const char *name) {
     }
 }
 
+/* Extension: priority inheritance demo state. */
+static mutex_t  pi_mutex;
+static uint32_t pi_high_wait_start;
+
+static void pi_low_worker(void *arg) {
+    (void)arg;
+    mutex_lock(&pi_mutex);
+    vga_puts_color("\n  [LOW]    acquired pi_mutex, doing CPU-bound work...\n",
+                   VGA_LIGHT_RED, VGA_BLACK);
+    /* Hold the lock for at least 30 SCHEDULER TICKS (~300ms of
+     * scheduled time), not a fixed instruction count -- a raw
+     * iteration count finishes in well under 10ms on real hardware,
+     * releasing the mutex before HIGH even starts waiting and making
+     * the whole demo a no-op. Ticks are tied to the emulated PIT, so
+     * this is consistent regardless of host CPU speed. */
+    uint32_t start = scheduler_ticks();
+    while (scheduler_ticks() - start < 30) {
+        volatile uint32_t j;
+        for (j = 0; j < 5000; j++) { }
+    }
+    vga_puts_color("  [LOW]    releasing pi_mutex\n", VGA_LIGHT_RED, VGA_BLACK);
+    mutex_unlock(&pi_mutex);
+}
+
+static void pi_medium_worker(void *arg) {
+    (void)arg;
+    /* Pure CPU hog -- never touches pi_mutex at all. Without priority
+     * inheritance, this is what would starve LOW out (and therefore
+     * HIGH, indirectly) via ordinary MLFQ scheduling. Tick-bound (not
+     * a fixed iteration count) so it keeps contending for the WHOLE
+     * span of LOW's critical section, regardless of host CPU speed. */
+    uint32_t start = scheduler_ticks();
+    while (scheduler_ticks() - start < 40) {
+        volatile uint32_t j;
+        for (j = 0; j < 5000; j++) { }
+    }
+}
+
+static void pi_high_worker(void *arg) {
+    (void)arg;
+    sleep_ms(50);   /* give LOW a head start so it grabs the mutex first,
+                      * but still well inside LOW's ~300ms critical section */
+    vga_puts_color("  [HIGH]   trying to lock pi_mutex...\n", VGA_LIGHT_GREEN, VGA_BLACK);
+    pi_high_wait_start = scheduler_ticks();
+    mutex_lock(&pi_mutex);
+    uint32_t waited = scheduler_ticks() - pi_high_wait_start;
+    vga_printf("  [HIGH]   acquired pi_mutex after %u ticks (~%u ms) waiting\n\n",
+               waited, waited * 10);
+    mutex_unlock(&pi_mutex);
+}
+
+static void cmd_priotest(void) {
+    mutex_init(&pi_mutex);
+    vga_puts("\n  Priority inheritance demo: LOW holds pi_mutex, MEDIUM hogs\n");
+    vga_puts("  the CPU (never touches the mutex), HIGH waits for it...\n");
+    thread_create(pi_low_worker, 0);
+    thread_create(pi_medium_worker, 0);
+    thread_create(pi_high_worker, 0);
+}
+
 static void cpuhog_process(void) {
     uint32_t counter = 0;
     for (;;) {
@@ -503,6 +565,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
         if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
         if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }
+        if (k_strcmp(cmd, "priotest") == 0) { cmd_priotest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
