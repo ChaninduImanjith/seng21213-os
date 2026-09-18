@@ -729,3 +729,31 @@ Run `deadlocktest`, wait a moment for both threads to block, then run
 **Lecture concept:** L11 §2 — Coffman conditions (mutual exclusion,
 hold-and-wait, no preemption, circular wait -- this demo constructs
 all four deliberately to trigger the cycle the detector is built to find).
+
+---
+
+## Bonus Extension — kmalloc/kfree (Slab-Style Heap Allocator)
+
+**What was built:**
+- `kernel/kmalloc.h`/`.c` -- a variable-size heap allocator sitting
+  entirely on top of the existing frame allocator (`pmm.c` is
+  untouched). Each "arena" is one 4KB frame obtained from
+  `pmm_alloc_frame()`, carved into a singly-linked free list of
+  blocks. `kmalloc()` first-fits within existing arenas, splitting a
+  block if there's meaningfully more room than requested, and only
+  requests a fresh page from the PMM when nothing existing fits.
+  `kfree()` marks a block free for reuse (no neighbour-coalescing, to
+  keep it simple -- some fragmentation over time is the tradeoff).
+- `kmtest` shell command allocates 3 blocks of different sizes, writes
+  distinct patterns into each, frees one, allocates a new block
+  (verifying it can reuse the freed space), and confirms every other
+  allocation's data is still intact and untouched.
+
+**How to test:**
+
+    make clean && make run
+
+Run `kmtest` -- expect `PASS: allocations isolated, data intact after free/reuse`.
+
+**Lecture concept:** L11 §5 — memory allocation strategies (variable-size
+heap allocation built on top of fixed-size physical frames).
