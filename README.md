@@ -999,3 +999,11 @@ checkpoint inside one boot session. It demonstrates write-ahead ordering and
 redo recovery, but not persistence across a real power cycle.
 
 **Lecture concept:** Stage 4 / L12 — write-ahead journaling and recovery.
+
+### QEMU Scrollback Controls
+
+The VGA console keeps a 100-line scrollback history.
+
+- `Page Up` / `Page Down` browse previous console output.
+- `F11` / `F12` provide QEMU/laptop-friendly scroll-up and scroll-down controls.
+- Typing another key automatically returns to the live shell view.

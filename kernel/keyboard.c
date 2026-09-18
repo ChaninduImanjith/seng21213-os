@@ -87,6 +87,14 @@ int kb_getchar(void) {
         if (sc == 0x2A || sc == 0x36) { shift_held = true; continue; }
         if (sc == 0x3A) { capslock_on = !capslock_on; continue; }  /* CapsLock: toggle, not held */
 
+        /* QEMU/laptop-friendly scrollback fallback.
+         * F11 and F12 are ordinary (non-E0) PS/2 Set-1 scan codes.
+         * Reuse the existing PageUp/PageDown events so kb_readline()
+         * needs no additional scrollback logic.
+         */
+        if (sc == 0x57) return KB_KEY_PGUP;  /* F11 -> scroll up */
+        if (sc == 0x58) return KB_KEY_PGDN;  /* F12 -> scroll down */
+
         /* AltGr demo mapping: AltGr+2 -> '@', the same combo many
          * European ISO keyboard layouts use. A full accented-character
          * table is layout-specific and out of scope; this proves the
