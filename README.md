@@ -665,3 +665,36 @@ MEDIUM's unrelated CPU hogging.
 mode this classic OS bug describes: a HIGH priority task blocked
 indefinitely by a MEDIUM priority task with no direct relationship to
 the lock at all).
+
+---
+
+## Bonus Extension — Read-Write Lock (rwlock_t)
+
+**What was built:**
+- `rwlock_t` (`kernel/rwlock.h`/`.c`): `reader_count`, `writer_active`,
+  and `writer_waiting` flags, using the same `cli`/`sti` spinlock
+  pattern as `mutex.c`.
+- `rwlock_read_lock()`: multiple readers can hold it simultaneously
+  (increments `reader_count`); blocks only if a writer is active OR
+  waiting.
+- `rwlock_write_lock()`: sets `writer_waiting = 1` immediately (before
+  spinning), which stops any NEW reader from joining -- this is the
+  writer-starvation fix. Readers already in when the writer arrives
+  still finish normally; once `reader_count` reaches 0, the writer
+  gets exclusive access.
+- `rwtest` shell command demos it: 3 reader threads acquire and print
+  the live reader count (showing 1, 2, then 3 concurrently), then 1
+  writer thread waits for all of them to finish before writing
+  exclusively.
+
+**How to test:**
+
+    make clean && make run
+
+Run `rwtest` -- all 3 `[READER n] acquired` messages appear with
+increasing "active readers" counts before any release, proving they
+overlap; the writer only gets in afterward.
+
+**Lecture concept:** L10 §5 — concurrency patterns (specifically the
+readers-writers problem and the classic starvation failure mode a
+naive implementation has).
