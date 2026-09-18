@@ -58,6 +58,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/semaphore.c \
                    kernel/rwlock.c \
                    kernel/deadlock.c \
+                   kernel/kmalloc.c \
                    kernel/pmm.c \
                    kernel/ramdisk.c \
                    kernel/fs.c
@@ -69,6 +70,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/semaphore.c \
                    kernel/rwlock.c \
                    kernel/deadlock.c \
+                   kernel/kmalloc.c \
                    kernel/pmm.c \
                    kernel/ramdisk.c \
                    kernel/fs.c

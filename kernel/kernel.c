@@ -8,6 +8,7 @@
 #include "pmm.h"
 #include "rwlock.h"
 #include "deadlock.h"
+#include "kmalloc.h"
 #include "ramdisk.h"
 #include "fs.h"
 #include "../include/types.h"
@@ -26,6 +27,7 @@ static void cmd_priotest(void);
 static void cmd_rwlocktest(void);
 static void cmd_deadlocktest(void);
 static void cmd_deadlockcheck(void);
+static void cmd_kmalloctest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -102,6 +104,7 @@ static void cmd_help(void) {
     vga_puts("  rwtest   - Demo read-write lock (concurrent readers, exclusive writer)\n");
     vga_puts("  deadlocktest  - Spawn a classic AB-BA deadlock\n");
     vga_puts("  deadlockcheck - Scan the resource graph for a deadlock\n");
+    vga_puts("  kmtest        - Demo kmalloc/kfree heap allocator\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -552,6 +555,38 @@ static void dl_thread2(void *arg) {
     mutex_unlock(&dl_mutex_b);
 }
 
+static void cmd_kmalloctest(void) {
+    vga_puts("\n  kmalloc/kfree test...\n");
+    char *a = (char *)kmalloc(32);
+    char *b = (char *)kmalloc(64);
+    char *c = (char *)kmalloc(16);
+    if (!a || !b || !c) {
+        vga_puts_color("  FAIL: kmalloc returned NULL\n\n", VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+    int i, ok = 1;
+    for (i = 0; i < 32; i++) a[i] = 'A';
+    for (i = 0; i < 64; i++) b[i] = 'B';
+    for (i = 0; i < 16; i++) c[i] = 'C';
+
+    kfree(b);
+    char *d = (char *)kmalloc(20);   /* should reuse space freed by b */
+    for (i = 0; i < 20; i++) d[i] = 'D';
+
+    for (i = 0; i < 32; i++) if (a[i] != 'A') ok = 0;
+    for (i = 0; i < 16; i++) if (c[i] != 'C') ok = 0;
+    for (i = 0; i < 20; i++) if (d[i] != 'D') ok = 0;
+
+    kfree(a); kfree(c); kfree(d);
+
+    if (ok) {
+        vga_puts_color("  PASS: allocations isolated, data intact after free/reuse\n\n",
+                       VGA_LIGHT_GREEN, VGA_BLACK);
+    } else {
+        vga_puts_color("  FAIL: data corruption detected\n\n", VGA_LIGHT_RED, VGA_BLACK);
+    }
+}
+
 static void cmd_deadlocktest(void) {
     mutex_init(&dl_mutex_a);
     mutex_init(&dl_mutex_b);
@@ -673,6 +708,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "rwtest") == 0) { cmd_rwlocktest(); continue; }
         if (k_strcmp(cmd, "deadlocktest") == 0) { cmd_deadlocktest(); continue; }
         if (k_strcmp(cmd, "deadlockcheck") == 0) { cmd_deadlockcheck(); continue; }
+        if (k_strcmp(cmd, "kmtest") == 0) { cmd_kmalloctest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
@@ -701,6 +737,7 @@ void kernel_main(void) {
     print_splash();
 
     pmm_init();
+    kmalloc_init();
     fs_init();
     mutex_init(&myglobal_mutex);
 
