@@ -386,6 +386,11 @@ Stage 0–4 deliverable; listed here for transparency.
 
 ## Bonus Extension — Command History & Cursor Editing
 
+**QEMU evidence:**
+
+![Command history and cursor editing in the kernel shell](screenshots/bonus-01-command-history.png)
+
+
 **What was built (Stage 0 extension, implemented after Stage 4):**
 - Fixed a bug where arrow keys were misread as numpad digits — PS/2
   extended keys (arrows, Home/End, etc.) send a `0xE0` prefix byte
@@ -418,6 +423,11 @@ to wrap would throw off the column math used to reposition the cursor.
 
 ## Bonus Extension — Full ISO Keyboard Layout (CapsLock, AltGr)
 
+**QEMU evidence:**
+
+![ISO keyboard support with CapsLock and modifier handling](screenshots/bonus-02-iso-keyboard.png)
+
+
 **What was built:**
 - **CapsLock** (scancode `0x3A`) — toggles a `capslock_on` flag (not a
   held-key state like Shift). Applied by flipping the case of whatever
@@ -447,6 +457,11 @@ held-key modifier state).
 ---
 
 ## Bonus Extension — VGA Scrollback Buffer (Page Up / Page Down)
+
+**QEMU evidence:**
+
+![VGA console scrollback using Page Up/Page Down or F11/F12](screenshots/bonus-03-vga-scrollback.png)
+
 
 **What was built:**
 - `kernel/vga.c` — a 100-line ring buffer (`history[]`). Every time
@@ -482,6 +497,11 @@ buffer as a ring of rows rather than a fixed screen).
 
 ## Bonus Extension — ANSI Escape-Code Colour Support
 
+**QEMU evidence:**
+
+![ANSI escape-code colour rendering on the VGA console](screenshots/bonus-04-ansi-colours.png)
+
+
 **What was built:**
 - `vga_puts_ansi()` (in `vga.c`) parses a minimal subset of ANSI SGR
   (Select Graphic Rendition) sequences: `ESC[<n>;<n>...m`. Supported
@@ -506,6 +526,11 @@ bytes rather than printable characters).
 ---
 
 ## Bonus Extension — sleep(ms) with Sorted Wake Queue
+
+**QEMU evidence:**
+
+![Sleeping processes shown in the BLOCKED state](screenshots/bonus-05-sleep-queue.png)
+
 
 **What was built:**
 - `pcb_t` gained a `wake_tick` field (Extension addition).
@@ -541,6 +566,11 @@ mutex/semaphore's busy-wait-with-hlt approach from Stage 2).
 ---
 
 ## Bonus Extension — fork() (Duplicate PCB + Stack)
+
+**QEMU evidence:**
+
+![fork() demonstration showing parent and child execution](screenshots/bonus-06-fork.png)
+
 
 **What was built:**
 - `pcb_t` gained `fork_requested` and `fork_return_value` fields.
@@ -594,6 +624,11 @@ right after a switch, not while a process is actively executing).
 
 ## Bonus Extension — MLFQ Scheduler (3 Priority Levels)
 
+**QEMU evidence:**
+
+![MLFQ scheduler showing CPU-bound processes demoted to lower priority](screenshots/bonus-07-mlfq-scheduler.png)
+
+
 **What was built:**
 - The single ready queue became an array of 3 (`ready_head[level]` /
   `ready_tail[level]`, level 0 = highest priority). `pcb_t` gained a
@@ -636,6 +671,11 @@ feedback queues, and the classic aging/starvation-prevention problem).
 
 ## Bonus Extension — Priority Inheritance in Mutex
 
+**QEMU evidence:**
+
+![Priority inheritance mutex demonstration](screenshots/bonus-08-priority-inheritance.png)
+
+
 **What was built:**
 - `mutex_t` gained `owner` (which PCB currently holds it) and
   `owner_saved_priority` (its priority before any inheritance boost).
@@ -670,6 +710,11 @@ the lock at all).
 
 ## Bonus Extension — Read-Write Lock (rwlock_t)
 
+**QEMU evidence:**
+
+![Read-write lock with concurrent readers and exclusive writer](screenshots/bonus-09-rwlock.png)
+
+
 **What was built:**
 - `rwlock_t` (`kernel/rwlock.h`/`.c`): `reader_count`, `writer_active`,
   and `writer_waiting` flags, using the same `cli`/`sti` spinlock
@@ -703,6 +748,11 @@ naive implementation has).
 
 ## Bonus Extension — Deadlock Detector (Resource-Allocation Graph, DFS)
 
+**QEMU evidence:**
+
+![Resource-allocation graph detecting an AB-BA deadlock](screenshots/bonus-10-deadlock-detector.png)
+
+
 **What was built:**
 - `kernel/deadlock.h`/`.c` -- an opt-in resource-allocation graph
   tracker: `deadlock_register_resource()`, `deadlock_note_owner()`,
@@ -734,6 +784,11 @@ all four deliberately to trigger the cycle the detector is built to find).
 
 ## Bonus Extension — kmalloc/kfree (Slab-Style Heap Allocator)
 
+**QEMU evidence:**
+
+![kmalloc/kfree allocator reuse and isolation test](screenshots/bonus-11-kmalloc-slab.png)
+
+
 **What was built:**
 - `kernel/kmalloc.h`/`.c` -- a variable-size heap allocator sitting
   entirely on top of the existing frame allocator (`pmm.c` is
@@ -761,6 +816,11 @@ heap allocation built on top of fixed-size physical frames).
 ---
 
 ## Bonus Extension — Single-Indirect Block Pointer
+
+**QEMU evidence:**
+
+![Single-indirect filesystem block test crossing the direct-block limit](screenshots/bonus-13-single-indirect.png)
+
 
 **What was built:**
 - Extended each inode from 8 direct block pointers to 8 direct pointers plus
@@ -794,6 +854,11 @@ deletes the test file.
 ---
 
 ## Bonus Extension — Subdirectories (`mkdir`, `cd`, `pwd`)
+
+**QEMU evidence:**
+
+![Hierarchical directory mkdir, cd and pwd test](screenshots/bonus-14-subdirectories.png)
+
 
 **What was built:**
 - Added inode types for regular files and directories.
@@ -840,6 +905,11 @@ hierarchical directories.
 ---
 
 ## Bonus Extension — Virtual File System (VFS) Abstraction
+
+**QEMU evidence:**
+
+![VFS file_ops_t dispatch through the RAM filesystem backend](screenshots/bonus-16-vfs.png)
+
 
 **What was built:**
 - Added a generic Virtual File System layer in `kernel/vfs.c` and `kernel/vfs.h`.
@@ -901,6 +971,11 @@ Both tests should continue to pass through the VFS layer.
 
 ## Bonus Extension — Buddy Physical-Memory Allocator
 
+**QEMU evidence:**
+
+![Buddy allocator split and coalescing test](screenshots/bonus-12-buddy-allocator.png)
+
+
 **What was built:**
 - Added a buddy allocator in `kernel/buddy.c` and `kernel/buddy.h`.
 - Reserved a 1 MiB aligned physical-memory pool from the existing PMM.
@@ -945,6 +1020,11 @@ does not silently exceed that configured limit.
 ---
 
 ## Bonus Extension — Write-Ahead Metadata Journaling
+
+**QEMU evidence:**
+
+![Write-ahead journal simulated-crash recovery test](screenshots/bonus-15-journaling.png)
+
 
 **What was built:**
 - Added a redo-style write-ahead journal in `kernel/journal.c` and
@@ -1011,6 +1091,13 @@ The VGA console keeps a 100-line scrollback history.
 ---
 
 ## Bonus Extension — GRUB2 Multiboot Boot Support
+
+**QEMU evidence:**
+
+![GRUB2 Multiboot menu](screenshots/bonus-17-grub2-menu.png)
+
+![Kernel successfully booted through GRUB2 Multiboot](screenshots/bonus-17-grub2-boot.png)
+
 
 **What was built:**
 - Added a Multiboot v1 header recognized by GRUB2.
