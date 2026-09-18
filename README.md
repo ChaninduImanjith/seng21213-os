@@ -790,3 +790,49 @@ The test writes 41,083 bytes, reads it back, verifies every byte, and then
 deletes the test file.
 
 **Lecture concept:** L12 §2 — i-node indirection / single-indirect block addressing.
+
+---
+
+## Bonus Extension — Subdirectories (`mkdir`, `cd`, `pwd`)
+
+**What was built:**
+- Added inode types for regular files and directories.
+- Reserved inode 0 as the root directory `/`.
+- Directory entries now store a parent inode, allowing a hierarchical namespace.
+- Added `mkdir <name>` to create subdirectories.
+- Added `cd <name>`, `cd ..`, and `cd /` navigation.
+- Added `pwd` to reconstruct and display the current working directory.
+- Existing `touch`, `write`, `cat`, `rm`, and `ls` now operate relative to the current directory.
+- Different directories can contain files with the same name independently.
+
+**How to test:**
+
+    make clean && make run
+    dirtest
+
+Expected:
+
+    PASS: mkdir + nested cd + pwd hierarchy works
+    PASS: nested file write/read and parent navigation work
+
+Manual namespace test:
+
+    cd /
+    touch readme
+    write readme RootFile
+    cat readme
+
+    cd docs
+    cat readme
+
+The root file prints `RootFile`, while `/docs/readme` keeps its own contents.
+
+Regression test:
+
+    cd /
+    indirecttest
+
+The single-indirect block test should continue to pass after enabling
+hierarchical directories.
+
+**Lecture concept:** L12 §3 — hierarchical file systems.

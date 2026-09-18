@@ -29,6 +29,10 @@ static void cmd_deadlocktest(void);
 static void cmd_deadlockcheck(void);
 static void cmd_kmalloctest(void);
 static void cmd_indirecttest(void);
+static void cmd_mkdir(const char *name);
+static void cmd_cd(const char *name);
+static void cmd_pwd(void);
+static void cmd_dirtest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -98,6 +102,10 @@ static void cmd_help(void) {
     vga_puts("  cat      - Print file contents\n");
     vga_puts("  write    - write <file> <text> - write text to a file\n");
     vga_puts("  rm       - Remove a file\n");
+    vga_puts("  mkdir    - mkdir <name> - Create a subdirectory\n");
+    vga_puts("  cd       - cd <name|..|/> - Change directory\n");
+    vga_puts("  pwd      - Print current working directory\n");
+    vga_puts("  dirtest  - Test nested subdirectories\n");
     vga_puts("  ansi     - Demo ANSI escape-code colours\n");
     vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
     vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
@@ -556,6 +564,195 @@ static void cmd_indirecttest(void) {
         VGA_LIGHT_GREEN, VGA_BLACK);
 }
 
+
+/* --------------------------------------------------------------------------
+ * Stage 4 bonus -- hierarchical filesystem shell commands.
+ * -------------------------------------------------------------------------- */
+
+static void cmd_mkdir(const char *name) {
+    if (k_strlen(name) == 0) {
+        vga_puts("  Usage: mkdir <name>\n");
+        return;
+    }
+
+    if (fs_mkdir(name) < 0) {
+        vga_puts_color(
+            "  Error: could not create directory (exists/invalid/full)\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    vga_puts("  OK\n");
+}
+
+static void cmd_cd(const char *name) {
+    char cwd[256];
+
+    if (k_strlen(name) == 0) {
+        vga_puts("  Usage: cd <name|..|/>\n");
+        return;
+    }
+
+    if (fs_chdir(name) < 0) {
+        vga_puts_color(
+            "  Error: directory not found\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    if (fs_getcwd(cwd, sizeof(cwd)) == 0) {
+        vga_puts("  ");
+        vga_puts(cwd);
+        vga_puts("\n");
+    }
+}
+
+static void cmd_pwd(void) {
+    char cwd[256];
+
+    if (fs_getcwd(cwd, sizeof(cwd)) < 0) {
+        vga_puts_color(
+            "  Error: could not construct current path\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    vga_puts("  ");
+    vga_puts(cwd);
+    vga_puts("\n");
+}
+
+/* Automated hierarchy test.
+ *
+ * Creates:
+ *
+ *   /alpha/
+ *       beta/
+ *           note
+ *
+ * Then verifies:
+ *   - cwd == /alpha/beta
+ *   - nested file write/read works
+ *   - cd .. returns to /alpha
+ *   - cd / returns to root
+ *
+ * The test is intentionally idempotent enough for repeated use:
+ * existing alpha/beta directories are accepted.
+ */
+static void cmd_dirtest(void) {
+    static char read_buf[64];
+    char cwd[256];
+    const char *msg = "NestedDirectoryWorks";
+    int n;
+    int i;
+
+    vga_puts_color("\n  Hierarchical directory test\n",
+                   VGA_LIGHT_CYAN,
+                   VGA_BLACK);
+    vga_puts("  -----------------------------------------------\n");
+
+    if (fs_chdir("/") < 0) {
+        vga_puts_color("  FAIL: could not enter root\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (fs_mkdir("alpha") < 0 && !fs_is_dir("alpha")) {
+        vga_puts_color("  FAIL: could not create /alpha\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (fs_chdir("alpha") < 0) {
+        vga_puts_color("  FAIL: could not cd /alpha\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (fs_mkdir("beta") < 0 && !fs_is_dir("beta")) {
+        vga_puts_color("  FAIL: could not create /alpha/beta\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    if (fs_chdir("beta") < 0) {
+        vga_puts_color("  FAIL: could not cd /alpha/beta\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    if (fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+        k_strcmp(cwd, "/alpha/beta") != 0) {
+        vga_puts_color("  FAIL: pwd mismatch\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    n = fs_write("note", msg, (uint32_t)k_strlen(msg));
+
+    if (n != (int)k_strlen(msg)) {
+        vga_puts_color("  FAIL: nested file write failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    for (i = 0; i < (int)sizeof(read_buf); i++) {
+        read_buf[i] = 0;
+    }
+
+    n = fs_read("note", read_buf, sizeof(read_buf) - 1);
+
+    if (n != (int)k_strlen(msg)) {
+        vga_puts_color("  FAIL: nested file read failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    read_buf[n] = 0;
+
+    if (k_strcmp(read_buf, msg) != 0) {
+        vga_puts_color("  FAIL: nested file contents differ\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    if (fs_chdir("..") < 0 ||
+        fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+        k_strcmp(cwd, "/alpha") != 0) {
+        vga_puts_color("  FAIL: cd .. did not reach /alpha\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        fs_chdir("/");
+        return;
+    }
+
+    if (fs_chdir("/") < 0 ||
+        fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+        k_strcmp(cwd, "/") != 0) {
+        vga_puts_color("  FAIL: cd / did not reach root\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    vga_puts_color(
+        "  PASS: mkdir + nested cd + pwd hierarchy works\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+
+    vga_puts_color(
+        "  PASS: nested file write/read and parent navigation work\n\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+}
+
 /* Extension: priority inheritance demo state. */
 static mutex_t  pi_mutex;
 static uint32_t pi_high_wait_start;
@@ -819,6 +1016,10 @@ static void shell_run(void) {
         if (k_strncmp(cmd, "cat ", 4)   == 0) { cmd_cat(k_ltrim(cmd + 4));      continue; }
         if (k_strncmp(cmd, "write ", 6) == 0) { cmd_write(k_ltrim(cmd + 6));    continue; }
         if (k_strncmp(cmd, "rm ", 3)    == 0) { cmd_rm(k_ltrim(cmd + 3));       continue; }
+        if (k_strncmp(cmd, "mkdir ", 6) == 0) { cmd_mkdir(k_ltrim(cmd + 6));    continue; }
+        if (k_strncmp(cmd, "cd ", 3)    == 0) { cmd_cd(k_ltrim(cmd + 3));       continue; }
+        if (k_strcmp(cmd, "pwd")        == 0) { cmd_pwd();                       continue; }
+        if (k_strcmp(cmd, "dirtest")    == 0) { cmd_dirtest();                   continue; }
         if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
         if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
         if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }

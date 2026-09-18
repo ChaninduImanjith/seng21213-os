@@ -22,6 +22,12 @@
 #define FS_INODE_TABLE_NUM   4
 #define FS_DATA_START_NUM    5
 
+/* L12 §3 -- hierarchical filesystem extension. */
+#define FS_ROOT_INODE   0
+#define FS_TYPE_UNUSED  0
+#define FS_TYPE_FILE    1
+#define FS_TYPE_DIR     2
+
 void fs_init(void);
 
 int fs_write(const char *name, const char *data, uint32_t len); /* create-or-truncate; returns bytes written or -1 */
@@ -32,5 +38,16 @@ uint32_t fs_size(const char *name);                               /* returns fil
 /* Iterate directory entries for `ls`: call with index 0,1,2,... until
  * it returns 0 (no more entries). Fills *name_out and *size_out. */
 int fs_list(int index, char *name_out, uint32_t *size_out);
+
+/* Stage 4 bonus -- hierarchical directories.
+ *
+ * Paths are intentionally simple for this teaching kernel:
+ * mkdir accepts one component, cd supports name, ".", "..", and "/".
+ * Repeated cd operations allow arbitrary nesting.
+ */
+int fs_mkdir(const char *name);
+int fs_chdir(const char *name);
+int fs_getcwd(char *buf, uint32_t maxlen);
+int fs_is_dir(const char *name);
 
 #endif
