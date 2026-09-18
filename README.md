@@ -836,3 +836,63 @@ The single-indirect block test should continue to pass after enabling
 hierarchical directories.
 
 **Lecture concept:** L12 §3 — hierarchical file systems.
+
+---
+
+## Bonus Extension — Virtual File System (VFS) Abstraction
+
+**What was built:**
+- Added a generic Virtual File System layer in `kernel/vfs.c` and `kernel/vfs.h`.
+- Added a `file_ops_t` function-pointer table (vtable) for filesystem operations.
+- Registered the existing RAM-disk filesystem as the current VFS backend.
+- Added generic `vfs_*` operations for:
+  - read
+  - write
+  - unlink
+  - size
+  - list
+  - mkdir
+  - chdir
+  - getcwd
+  - directory checks
+- Shell filesystem commands now use the VFS interface rather than calling
+  the concrete `fs_*` implementation directly.
+- The current backend is named `ramfs`.
+- The design allows another filesystem implementation to be attached later
+  by providing another `file_ops_t` table.
+
+**Architecture:**
+
+    Shell / Kernel
+         |
+         v
+       vfs_*()
+         |
+         v
+     file_ops_t
+         |
+         v
+      ramfs_ops
+         |
+         v
+       fs_*()
+
+**How to test:**
+
+    make clean && make run
+    vfstest
+
+Expected:
+
+    Backend: ramfs
+    PASS: write/read/size/unlink dispatched through file_ops_t
+    PASS: RAM filesystem is hidden behind generic VFS API
+
+Regression tests:
+
+    dirtest
+    indirecttest
+
+Both tests should continue to pass through the VFS layer.
+
+**Lecture concept:** L12 §3 — Virtual File System design.

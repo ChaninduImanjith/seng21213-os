@@ -61,7 +61,8 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/kmalloc.c \
                    kernel/pmm.c \
                    kernel/ramdisk.c \
-                   kernel/fs.c
+                   kernel/fs.c \
+                   kernel/vfs.c
 
 # Add your new source files below as the course progresses:
 # Lecture 09: kernel/process.c kernel/scheduler.c \

@@ -11,6 +11,7 @@
 #include "kmalloc.h"
 #include "ramdisk.h"
 #include "fs.h"
+#include "vfs.h"
 #include "../include/types.h"
 
 static void cmd_help(void);
@@ -33,6 +34,7 @@ static void cmd_mkdir(const char *name);
 static void cmd_cd(const char *name);
 static void cmd_pwd(void);
 static void cmd_dirtest(void);
+static void cmd_vfstest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -106,6 +108,7 @@ static void cmd_help(void) {
     vga_puts("  cd       - cd <name|..|/> - Change directory\n");
     vga_puts("  pwd      - Print current working directory\n");
     vga_puts("  dirtest  - Test nested subdirectories\n");
+    vga_puts("  vfstest  - Test file_ops_t VFS dispatch layer\n");
     vga_puts("  ansi     - Demo ANSI escape-code colours\n");
     vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
     vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
@@ -386,7 +389,7 @@ static void cmd_ls(void) {
     int idx = 0, found = 0;
     vga_puts_color("\n  NAME                          SIZE\n", VGA_YELLOW, VGA_BLACK);
     vga_puts("  -----------------------------------------\n");
-    while (fs_list(idx, name, &size)) {
+    while (vfs_list(idx, name, &size)) {
         vga_puts("  ");
         vga_puts(name);
         vga_puts("   ");
@@ -399,11 +402,11 @@ static void cmd_ls(void) {
 
 static void cmd_touch(const char *name) {
     if (k_strlen(name) == 0) { vga_puts("  Usage: touch <file>\n"); return; }
-    if (fs_size(name) != (uint32_t)-1) {
+    if (vfs_size(name) != (uint32_t)-1) {
         vga_puts("  OK (already exists)\n");
         return;
     }
-    if (fs_write(name, "", 0) < 0) {
+    if (vfs_write(name, "", 0) < 0) {
         vga_puts_color("  Error: could not create file\n", VGA_LIGHT_RED, VGA_BLACK);
     } else {
         vga_puts("  OK\n");
@@ -421,13 +424,13 @@ static void cmd_cat(const char *name) {
         return;
     }
 
-    uint32_t file_size = fs_size(name);
+    uint32_t file_size = vfs_size(name);
     if (file_size == (uint32_t)-1) {
         vga_puts_color("  File not found\n", VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
 
-    int n = fs_read(name, buf, sizeof(buf) - 1);
+    int n = vfs_read(name, buf, sizeof(buf) - 1);
     if (n < 0) {
         vga_puts_color("  File not found\n", VGA_LIGHT_RED, VGA_BLACK);
         return;
@@ -451,7 +454,7 @@ static void cmd_write(const char *args) {
     fname[i] = 0;
     if (i == 0) { vga_puts("  Usage: write <file> <text>\n"); return; }
     const char *text = k_ltrim(args + i);
-    int n = fs_write(fname, text, (uint32_t)k_strlen(text));
+    int n = vfs_write(fname, text, (uint32_t)k_strlen(text));
     if (n < 0) {
         vga_puts_color("  Error: could not write file\n", VGA_LIGHT_RED, VGA_BLACK);
     } else {
@@ -461,7 +464,7 @@ static void cmd_write(const char *args) {
 
 static void cmd_rm(const char *name) {
     if (k_strlen(name) == 0) { vga_puts("  Usage: rm <file>\n"); return; }
-    if (fs_unlink(name) < 0) {
+    if (vfs_unlink(name) < 0) {
         vga_puts_color("  File not found\n", VGA_LIGHT_RED, VGA_BLACK);
     } else {
         vga_puts("  OK\n");
@@ -497,27 +500,27 @@ static void cmd_indirecttest(void) {
                (uint32_t)INDIRECT_TEST_SIZE);
 
     /* Remove leftovers from a previous interrupted test. */
-    fs_unlink(name);
+    vfs_unlink(name);
 
     /* Generate deterministic binary data. */
     for (i = 0; i < INDIRECT_TEST_SIZE; i++) {
         indirect_test_buf[i] = indirect_test_pattern(i);
     }
 
-    n = fs_write(name,
+    n = vfs_write(name,
                  (const char *)indirect_test_buf,
                  (uint32_t)INDIRECT_TEST_SIZE);
 
     if (n != (int)INDIRECT_TEST_SIZE) {
         vga_printf("  FAIL: write returned %d bytes\n", n);
-        fs_unlink(name);
+        vfs_unlink(name);
         return;
     }
 
-    if (fs_size(name) != (uint32_t)INDIRECT_TEST_SIZE) {
+    if (vfs_size(name) != (uint32_t)INDIRECT_TEST_SIZE) {
         vga_puts_color("  FAIL: file size mismatch\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_unlink(name);
+        vfs_unlink(name);
         return;
     }
 
@@ -526,31 +529,31 @@ static void cmd_indirecttest(void) {
         indirect_test_buf[i] = 0;
     }
 
-    n = fs_read(name,
+    n = vfs_read(name,
                 (char *)indirect_test_buf,
                 (uint32_t)INDIRECT_TEST_SIZE);
 
     if (n != (int)INDIRECT_TEST_SIZE) {
         vga_printf("  FAIL: read returned %d bytes\n", n);
-        fs_unlink(name);
+        vfs_unlink(name);
         return;
     }
 
     for (i = 0; i < INDIRECT_TEST_SIZE; i++) {
         if (indirect_test_buf[i] != indirect_test_pattern(i)) {
             vga_printf("  FAIL: data mismatch at byte %u\n", i);
-            fs_unlink(name);
+            vfs_unlink(name);
             return;
         }
     }
 
-    if (fs_unlink(name) < 0) {
+    if (vfs_unlink(name) < 0) {
         vga_puts_color("  FAIL: could not unlink test file\n",
                        VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
 
-    if (fs_size(name) != (uint32_t)-1) {
+    if (vfs_size(name) != (uint32_t)-1) {
         vga_puts_color("  FAIL: inode still visible after unlink\n",
                        VGA_LIGHT_RED, VGA_BLACK);
         return;
@@ -575,7 +578,7 @@ static void cmd_mkdir(const char *name) {
         return;
     }
 
-    if (fs_mkdir(name) < 0) {
+    if (vfs_mkdir(name) < 0) {
         vga_puts_color(
             "  Error: could not create directory (exists/invalid/full)\n",
             VGA_LIGHT_RED,
@@ -594,7 +597,7 @@ static void cmd_cd(const char *name) {
         return;
     }
 
-    if (fs_chdir(name) < 0) {
+    if (vfs_chdir(name) < 0) {
         vga_puts_color(
             "  Error: directory not found\n",
             VGA_LIGHT_RED,
@@ -602,7 +605,7 @@ static void cmd_cd(const char *name) {
         return;
     }
 
-    if (fs_getcwd(cwd, sizeof(cwd)) == 0) {
+    if (vfs_getcwd(cwd, sizeof(cwd)) == 0) {
         vga_puts("  ");
         vga_puts(cwd);
         vga_puts("\n");
@@ -612,7 +615,7 @@ static void cmd_cd(const char *name) {
 static void cmd_pwd(void) {
     char cwd[256];
 
-    if (fs_getcwd(cwd, sizeof(cwd)) < 0) {
+    if (vfs_getcwd(cwd, sizeof(cwd)) < 0) {
         vga_puts_color(
             "  Error: could not construct current path\n",
             VGA_LIGHT_RED,
@@ -654,52 +657,52 @@ static void cmd_dirtest(void) {
                    VGA_BLACK);
     vga_puts("  -----------------------------------------------\n");
 
-    if (fs_chdir("/") < 0) {
+    if (vfs_chdir("/") < 0) {
         vga_puts_color("  FAIL: could not enter root\n",
                        VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
 
-    if (fs_mkdir("alpha") < 0 && !fs_is_dir("alpha")) {
+    if (vfs_mkdir("alpha") < 0 && !vfs_is_dir("alpha")) {
         vga_puts_color("  FAIL: could not create /alpha\n",
                        VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
 
-    if (fs_chdir("alpha") < 0) {
+    if (vfs_chdir("alpha") < 0) {
         vga_puts_color("  FAIL: could not cd /alpha\n",
                        VGA_LIGHT_RED, VGA_BLACK);
         return;
     }
 
-    if (fs_mkdir("beta") < 0 && !fs_is_dir("beta")) {
+    if (vfs_mkdir("beta") < 0 && !vfs_is_dir("beta")) {
         vga_puts_color("  FAIL: could not create /alpha/beta\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
-    if (fs_chdir("beta") < 0) {
+    if (vfs_chdir("beta") < 0) {
         vga_puts_color("  FAIL: could not cd /alpha/beta\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
-    if (fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+    if (vfs_getcwd(cwd, sizeof(cwd)) < 0 ||
         k_strcmp(cwd, "/alpha/beta") != 0) {
         vga_puts_color("  FAIL: pwd mismatch\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
-    n = fs_write("note", msg, (uint32_t)k_strlen(msg));
+    n = vfs_write("note", msg, (uint32_t)k_strlen(msg));
 
     if (n != (int)k_strlen(msg)) {
         vga_puts_color("  FAIL: nested file write failed\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
@@ -707,12 +710,12 @@ static void cmd_dirtest(void) {
         read_buf[i] = 0;
     }
 
-    n = fs_read("note", read_buf, sizeof(read_buf) - 1);
+    n = vfs_read("note", read_buf, sizeof(read_buf) - 1);
 
     if (n != (int)k_strlen(msg)) {
         vga_puts_color("  FAIL: nested file read failed\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
@@ -721,21 +724,21 @@ static void cmd_dirtest(void) {
     if (k_strcmp(read_buf, msg) != 0) {
         vga_puts_color("  FAIL: nested file contents differ\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
-    if (fs_chdir("..") < 0 ||
-        fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+    if (vfs_chdir("..") < 0 ||
+        vfs_getcwd(cwd, sizeof(cwd)) < 0 ||
         k_strcmp(cwd, "/alpha") != 0) {
         vga_puts_color("  FAIL: cd .. did not reach /alpha\n",
                        VGA_LIGHT_RED, VGA_BLACK);
-        fs_chdir("/");
+        vfs_chdir("/");
         return;
     }
 
-    if (fs_chdir("/") < 0 ||
-        fs_getcwd(cwd, sizeof(cwd)) < 0 ||
+    if (vfs_chdir("/") < 0 ||
+        vfs_getcwd(cwd, sizeof(cwd)) < 0 ||
         k_strcmp(cwd, "/") != 0) {
         vga_puts_color("  FAIL: cd / did not reach root\n",
                        VGA_LIGHT_RED, VGA_BLACK);
@@ -749,6 +752,100 @@ static void cmd_dirtest(void) {
 
     vga_puts_color(
         "  PASS: nested file write/read and parent navigation work\n\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+}
+
+
+/* --------------------------------------------------------------------------
+ * Stage 4 bonus -- VFS abstraction test.
+ *
+ * IMPORTANT: every filesystem operation below goes through vfs_*(), not
+ * directly through fs_*(). The VFS layer dispatches through file_ops_t to
+ * the currently mounted RAM-disk filesystem backend.
+ * -------------------------------------------------------------------------- */
+static void cmd_vfstest(void) {
+    static char buf[64];
+    const char *name = "vfsdemo";
+    const char *msg  = "VFS dispatch works";
+    int expected = (int)k_strlen(msg);
+    int n;
+    int i;
+
+    vga_puts_color("\n  VFS file_ops_t dispatch test\n",
+                   VGA_LIGHT_CYAN,
+                   VGA_BLACK);
+    vga_puts("  -----------------------------------------------\n");
+
+    vga_puts("  Backend: ");
+    vga_puts(vfs_backend_name());
+    vga_puts("\n");
+
+    if (vfs_chdir("/") < 0) {
+        vga_puts_color("  FAIL: VFS could not enter root\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    /* Remove an old test file if a previous run left one behind. */
+    vfs_unlink(name);
+
+    n = vfs_write(name, msg, (uint32_t)expected);
+
+    if (n != expected) {
+        vga_puts_color("  FAIL: vfs_write dispatch failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (vfs_size(name) != (uint32_t)expected) {
+        vga_puts_color("  FAIL: vfs_size dispatch failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        vfs_unlink(name);
+        return;
+    }
+
+    for (i = 0; i < (int)sizeof(buf); i++) {
+        buf[i] = 0;
+    }
+
+    n = vfs_read(name, buf, sizeof(buf) - 1);
+
+    if (n != expected) {
+        vga_puts_color("  FAIL: vfs_read dispatch failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        vfs_unlink(name);
+        return;
+    }
+
+    buf[n] = 0;
+
+    if (k_strcmp(buf, msg) != 0) {
+        vga_puts_color("  FAIL: VFS read-back data mismatch\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        vfs_unlink(name);
+        return;
+    }
+
+    if (vfs_unlink(name) < 0) {
+        vga_puts_color("  FAIL: vfs_unlink dispatch failed\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    if (vfs_size(name) != (uint32_t)-1) {
+        vga_puts_color("  FAIL: file remained visible after VFS unlink\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+        return;
+    }
+
+    vga_puts_color(
+        "  PASS: write/read/size/unlink dispatched through file_ops_t\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+
+    vga_puts_color(
+        "  PASS: RAM filesystem is hidden behind generic VFS API\n\n",
         VGA_LIGHT_GREEN,
         VGA_BLACK);
 }
@@ -1020,6 +1117,7 @@ static void shell_run(void) {
         if (k_strncmp(cmd, "cd ", 3)    == 0) { cmd_cd(k_ltrim(cmd + 3));       continue; }
         if (k_strcmp(cmd, "pwd")        == 0) { cmd_pwd();                       continue; }
         if (k_strcmp(cmd, "dirtest")    == 0) { cmd_dirtest();                   continue; }
+        if (k_strcmp(cmd, "vfstest")    == 0) { cmd_vfstest();                   continue; }
         if (k_strcmp(cmd, "ansi") == 0) { cmd_ansi(); continue; }
         if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
         if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }
@@ -1059,6 +1157,7 @@ void kernel_main(void) {
     pmm_init();
     kmalloc_init();
     fs_init();
+    vfs_init();
     mutex_init(&myglobal_mutex);
 
     process_init();
