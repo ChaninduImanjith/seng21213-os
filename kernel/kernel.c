@@ -6,6 +6,7 @@
 #include "mutex.h"
 #include "semaphore.h"
 #include "pmm.h"
+#include "rwlock.h"
 #include "ramdisk.h"
 #include "fs.h"
 #include "../include/types.h"
@@ -21,6 +22,7 @@ static void cmd_ansi(void);
 static void cmd_forktest(void);
 static void cmd_cpuhog(void);
 static void cmd_priotest(void);
+static void cmd_rwlocktest(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -94,6 +96,7 @@ static void cmd_help(void) {
     vga_puts("  forktest - Demo fork() (duplicate PCB + stack)\n");
     vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
     vga_puts("  priotest - Demo mutex priority inheritance\n");
+    vga_puts("  rwtest   - Demo read-write lock (concurrent readers, exclusive writer)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -478,6 +481,44 @@ static void pi_high_worker(void *arg) {
     mutex_unlock(&pi_mutex);
 }
 
+/* Extension: rwlock demo state. */
+static rwlock_t rw_lock;
+static int      rw_shared_value = 0;
+
+static void rw_reader_worker(void *arg) {
+    int id = (int)(long)arg;
+    rwlock_read_lock(&rw_lock);
+    vga_printf("\n  [READER %d] acquired (active readers: %d), value=%d\n",
+               id, rwlock_active_readers(&rw_lock), rw_shared_value);
+    uint32_t start = scheduler_ticks();
+    while (scheduler_ticks() - start < 15) {
+        volatile uint32_t j;
+        for (j = 0; j < 5000; j++) { }
+    }
+    vga_printf("  [READER %d] releasing\n", id);
+    rwlock_read_unlock(&rw_lock);
+}
+
+static void rw_writer_worker(void *arg) {
+    (void)arg;
+    sleep_ms(30);
+    vga_puts_color("  [WRITER]  waiting for exclusive access...\n", VGA_YELLOW, VGA_BLACK);
+    rwlock_write_lock(&rw_lock);
+    rw_shared_value += 100;
+    vga_printf("  [WRITER]  acquired exclusively, wrote value=%d\n\n", rw_shared_value);
+    rwlock_write_unlock(&rw_lock);
+}
+
+static void cmd_rwlocktest(void) {
+    rwlock_init(&rw_lock);
+    rw_shared_value = 0;
+    vga_puts("\n  RW-lock demo: 3 readers (watch them overlap), 1 writer (exclusive)...\n");
+    thread_create(rw_reader_worker, (void *)1);
+    thread_create(rw_reader_worker, (void *)2);
+    thread_create(rw_reader_worker, (void *)3);
+    thread_create(rw_writer_worker, 0);
+}
+
 static void cmd_priotest(void) {
     mutex_init(&pi_mutex);
     vga_puts("\n  Priority inheritance demo: LOW holds pi_mutex, MEDIUM hogs\n");
@@ -566,6 +607,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "forktest") == 0) { cmd_forktest(); continue; }
         if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }
         if (k_strcmp(cmd, "priotest") == 0) { cmd_priotest(); continue; }
+        if (k_strcmp(cmd, "rwtest") == 0) { cmd_rwlocktest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));

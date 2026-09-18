@@ -56,6 +56,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/thread.c \
                    kernel/mutex.c \
                    kernel/semaphore.c \
+                   kernel/rwlock.c \
                    kernel/pmm.c \
                    kernel/ramdisk.c \
                    kernel/fs.c
@@ -65,6 +66,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/thread.c \
                    kernel/mutex.c \
                    kernel/semaphore.c \
+                   kernel/rwlock.c \
                    kernel/pmm.c \
                    kernel/ramdisk.c \
                    kernel/fs.c
