@@ -631,3 +631,37 @@ shell would need an interrupt-driven keyboard (or an explicit
 
 **Lecture concept:** L09 §4 — scheduling algorithms (multi-level
 feedback queues, and the classic aging/starvation-prevention problem).
+
+---
+
+## Bonus Extension — Priority Inheritance in Mutex
+
+**What was built:**
+- `mutex_t` gained `owner` (which PCB currently holds it) and
+  `owner_saved_priority` (its priority before any inheritance boost).
+- `mutex_lock()`: while waiting, if the caller is higher priority
+  (lower number) than the current owner, the owner's priority is
+  boosted to match right away -- before the classic priority-inversion
+  scenario (a medium-priority process starving out a low-priority lock
+  holder that a high-priority process is waiting on) can happen.
+- `mutex_unlock()`: restores the owner's priority to what it was
+  before any boost.
+- `priotest` shell command demos it with three threads: LOW acquires
+  the mutex and holds it doing tick-bound CPU work (~300ms of
+  scheduled time, not a fixed iteration count, so the demo is
+  consistent regardless of host CPU speed), MEDIUM is a pure CPU hog
+  that never touches the mutex at all, HIGH waits briefly then blocks
+  on the mutex, and the time it waits is measured in ticks.
+
+**How to test:**
+
+    make clean && make run
+
+Run `priotest` -- HIGH should acquire the mutex within roughly the
+time LOW's critical section takes (tens of ticks), not stalled by
+MEDIUM's unrelated CPU hogging.
+
+**Lecture concept:** L10 §4 — priority inversion (the specific failure
+mode this classic OS bug describes: a HIGH priority task blocked
+indefinitely by a MEDIUM priority task with no direct relationship to
+the lock at all).
