@@ -198,3 +198,8 @@ int fork(void) {
     __asm__ __volatile__("int $32");
     return current_process->fork_return_value;
 }
+
+int process_index_of(pcb_t *p) {
+    if (!p) return -1;
+    return (int)(p - process_table);
+}

@@ -70,4 +70,9 @@ int    fork(void);
  * Called periodically by the scheduler to prevent starvation. */
 void   process_boost_all(void);
 
+/* Extension: deadlock detector. Maps a PCB pointer back to its index
+ * in the (otherwise private) process table -- needed so the detector
+ * can key its wait-for graph by something stable and cheap. */
+int    process_index_of(pcb_t *p);
+
 #endif

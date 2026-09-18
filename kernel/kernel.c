@@ -7,6 +7,7 @@
 #include "semaphore.h"
 #include "pmm.h"
 #include "rwlock.h"
+#include "deadlock.h"
 #include "ramdisk.h"
 #include "fs.h"
 #include "../include/types.h"
@@ -23,6 +24,8 @@ static void cmd_forktest(void);
 static void cmd_cpuhog(void);
 static void cmd_priotest(void);
 static void cmd_rwlocktest(void);
+static void cmd_deadlocktest(void);
+static void cmd_deadlockcheck(void);
 static void cmd_touch(const char *name);
 static void cmd_cat(const char *name);
 static void cmd_write(const char *args);
@@ -97,6 +100,8 @@ static void cmd_help(void) {
     vga_puts("  cpuhog   - Spawn a CPU-bound process (watch it demote in ps)\n");
     vga_puts("  priotest - Demo mutex priority inheritance\n");
     vga_puts("  rwtest   - Demo read-write lock (concurrent readers, exclusive writer)\n");
+    vga_puts("  deadlocktest  - Spawn a classic AB-BA deadlock\n");
+    vga_puts("  deadlockcheck - Scan the resource graph for a deadlock\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
     vga_puts("  free     - [L11] Show free memory\n\n");
@@ -509,6 +514,64 @@ static void rw_writer_worker(void *arg) {
     rwlock_write_unlock(&rw_lock);
 }
 
+/* Extension: deadlock detector demo state -- a classic AB-BA
+ * deadlock. T1 locks A then tries B; T2 locks B then tries A. */
+static mutex_t dl_mutex_a, dl_mutex_b;
+
+static void dl_thread1(void *arg) {
+    (void)arg;
+    vga_puts_color("\n  [T1] locking A...\n", VGA_LIGHT_CYAN, VGA_BLACK);
+    mutex_lock(&dl_mutex_a);
+    deadlock_note_owner(&dl_mutex_a, current_process);
+    vga_puts_color("  [T1] got A, sleeping briefly...\n", VGA_LIGHT_CYAN, VGA_BLACK);
+    sleep_ms(50);
+    vga_puts_color("  [T1] locking B...\n", VGA_LIGHT_CYAN, VGA_BLACK);
+    deadlock_note_waiting(current_process, &dl_mutex_b);
+    mutex_lock(&dl_mutex_b);   /* blocks forever if T2 is holding B and wants A */
+    deadlock_note_done_waiting(current_process);
+    deadlock_note_owner(&dl_mutex_b, current_process);
+    vga_puts_color("  [T1] got B (only reachable if NOT deadlocked)\n", VGA_LIGHT_CYAN, VGA_BLACK);
+    mutex_unlock(&dl_mutex_b);
+    mutex_unlock(&dl_mutex_a);
+}
+
+static void dl_thread2(void *arg) {
+    (void)arg;
+    vga_puts_color("  [T2] locking B...\n", VGA_LIGHT_MAGENTA, VGA_BLACK);
+    mutex_lock(&dl_mutex_b);
+    deadlock_note_owner(&dl_mutex_b, current_process);
+    vga_puts_color("  [T2] got B, sleeping briefly...\n", VGA_LIGHT_MAGENTA, VGA_BLACK);
+    sleep_ms(50);
+    vga_puts_color("  [T2] locking A...\n", VGA_LIGHT_MAGENTA, VGA_BLACK);
+    deadlock_note_waiting(current_process, &dl_mutex_a);
+    mutex_lock(&dl_mutex_a);   /* blocks forever if T1 is holding A and wants B */
+    deadlock_note_done_waiting(current_process);
+    deadlock_note_owner(&dl_mutex_a, current_process);
+    vga_puts_color("  [T2] got A (only reachable if NOT deadlocked)\n", VGA_LIGHT_MAGENTA, VGA_BLACK);
+    mutex_unlock(&dl_mutex_a);
+    mutex_unlock(&dl_mutex_b);
+}
+
+static void cmd_deadlocktest(void) {
+    mutex_init(&dl_mutex_a);
+    mutex_init(&dl_mutex_b);
+    deadlock_register_resource(&dl_mutex_a);
+    deadlock_register_resource(&dl_mutex_b);
+    vga_puts("\n  Deadlock demo: T1 locks A then wants B, T2 locks B then wants A.\n");
+    vga_puts("  Wait a moment, then run `deadlockcheck`.\n");
+    thread_create(dl_thread1, 0);
+    thread_create(dl_thread2, 0);
+}
+
+static void cmd_deadlockcheck(void) {
+    if (deadlock_check()) {
+        vga_puts_color("\n  DEADLOCK DETECTED -- the resource-allocation graph has a cycle.\n\n",
+                       VGA_LIGHT_RED, VGA_BLACK);
+    } else {
+        vga_puts_color("\n  No deadlock detected.\n\n", VGA_LIGHT_GREEN, VGA_BLACK);
+    }
+}
+
 static void cmd_rwlocktest(void) {
     rwlock_init(&rw_lock);
     rw_shared_value = 0;
@@ -608,6 +671,8 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "cpuhog") == 0) { cmd_cpuhog(); continue; }
         if (k_strcmp(cmd, "priotest") == 0) { cmd_priotest(); continue; }
         if (k_strcmp(cmd, "rwtest") == 0) { cmd_rwlocktest(); continue; }
+        if (k_strcmp(cmd, "deadlocktest") == 0) { cmd_deadlocktest(); continue; }
+        if (k_strcmp(cmd, "deadlockcheck") == 0) { cmd_deadlockcheck(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {
             cmd_echo(k_ltrim(cmd + 5));
