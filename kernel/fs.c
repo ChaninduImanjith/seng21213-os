@@ -1,6 +1,7 @@
 #include "../include/types.h"
 #include "ramdisk.h"
 #include "fs.h"
+#include "journal.h"
 
 typedef struct {
     uint32_t magic;
@@ -103,19 +104,19 @@ static int valid_component(const char *name) {
  * -------------------------------------------------------------------------- */
 
 static fs_dirent_t *dir_table(void) {
-    return (fs_dirent_t *)ramdisk_block_ptr(FS_DIR_BLOCK_NUM);
+    return (fs_dirent_t *)journal_metadata_ptr(FS_DIR_BLOCK_NUM);
 }
 
 static fs_inode_t *inode_table(void) {
-    return (fs_inode_t *)ramdisk_block_ptr(FS_INODE_TABLE_NUM);
+    return (fs_inode_t *)journal_metadata_ptr(FS_INODE_TABLE_NUM);
 }
 
 static uint8_t *block_bitmap(void) {
-    return (uint8_t *)ramdisk_block_ptr(FS_BLOCK_BITMAP_NUM);
+    return (uint8_t *)journal_metadata_ptr(FS_BLOCK_BITMAP_NUM);
 }
 
 static uint8_t *inode_bitmap(void) {
-    return (uint8_t *)ramdisk_block_ptr(FS_INODE_BITMAP_NUM);
+    return (uint8_t *)journal_metadata_ptr(FS_INODE_BITMAP_NUM);
 }
 
 
@@ -351,7 +352,9 @@ void fs_init(void) {
         }
     }
 
-    /* Blocks 0..4 are filesystem metadata. */
+    /* Blocks 0..9 are reserved:
+     * 0..4 filesystem metadata, 5..9 write-ahead journal.
+     */
     {
         uint8_t *bbmap = block_bitmap();
 
@@ -367,6 +370,8 @@ void fs_init(void) {
                FS_ROOT_INODE);
 
     current_dir = FS_ROOT_INODE;
+
+    journal_init();
 }
 
 
@@ -377,22 +382,34 @@ void fs_init(void) {
 int fs_write(const char *name, const char *data, uint32_t len) {
     int dslot;
     int inum;
+    int existed = 0;
     fs_dirent_t *dir;
     fs_inode_t *inode;
+    fs_inode_t old_inode;
     uint8_t *bbmap;
     uint32_t written;
 
     if (!valid_component(name)) return -1;
+
+    if (journal_begin() < 0) {
+        return -1;
+    }
 
     dslot = find_dirent(name);
     dir = dir_table();
 
     if (dslot < 0) {
         dslot = find_free_dirent();
-        if (dslot < 0) return -1;
+        if (dslot < 0) {
+            journal_abort();
+            return -1;
+        }
 
         inum = find_free_inode();
-        if (inum < 0) return -1;
+        if (inum < 0) {
+            journal_abort();
+            return -1;
+        }
 
         inode_bitmap()[inum] = 1;
 
@@ -406,17 +423,28 @@ int fs_write(const char *name, const char *data, uint32_t len) {
     } else {
         inum = dir[dslot].inode;
 
-        /* Never truncate a directory through the file API. */
         if (inode_table()[inum].type != FS_TYPE_FILE) {
+            journal_abort();
             return -1;
         }
+
+        /*
+         * Ordered copy-on-write:
+         *
+         * Keep the old blocks allocated while the new file contents are
+         * written. Therefore a crash before journal commit leaves the old
+         * inode and old data untouched.
+         */
+        old_inode = inode_table()[inum];
+        existed = 1;
+
+        inode_init(&inode_table()[inum],
+                   FS_TYPE_FILE,
+                   current_dir);
     }
 
     inode = &inode_table()[inum];
     bbmap = block_bitmap();
-
-    /* Create-or-truncate semantics. */
-    inode_release_blocks(inode);
 
     if (len > FS_MAX_FILE_SIZE) {
         len = FS_MAX_FILE_SIZE;
@@ -459,6 +487,18 @@ int fs_write(const char *name, const char *data, uint32_t len) {
     }
 
     inode->size = written;
+
+    /* Only after replacement data is safely written do we make the old
+     * blocks free in the NEW metadata image. */
+    if (existed) {
+        inode_release_blocks(&old_inode);
+    }
+
+    if (journal_commit() < 0) {
+        journal_abort();
+        return -1;
+    }
+
     return (int)written;
 }
 
@@ -510,19 +550,28 @@ int fs_read(const char *name, char *buf, uint32_t maxlen) {
 }
 
 int fs_unlink(const char *name) {
-    int dslot = find_dirent(name);
+    int dslot;
     fs_dirent_t *dir;
     int inum;
     fs_inode_t *inode;
 
-    if (dslot < 0) return -1;
+    if (journal_begin() < 0) {
+        return -1;
+    }
+
+    dslot = find_dirent(name);
+
+    if (dslot < 0) {
+        journal_abort();
+        return -1;
+    }
 
     dir = dir_table();
     inum = dir[dslot].inode;
     inode = &inode_table()[inum];
 
-    /* rm is for regular files. Directories are deliberately protected. */
     if (inode->type != FS_TYPE_FILE) {
+        journal_abort();
         return -1;
     }
 
@@ -535,6 +584,11 @@ int fs_unlink(const char *name) {
     dir[dslot].name[0] = 0;
     dir[dslot].inode = -1;
     dir[dslot].parent = -1;
+
+    if (journal_commit() < 0) {
+        journal_abort();
+        return -1;
+    }
 
     return 0;
 }
@@ -591,20 +645,31 @@ int fs_mkdir(const char *name) {
         return -1;
     }
 
-    /* File and directory names share the same namespace. */
+    if (journal_begin() < 0) {
+        return -1;
+    }
+
     if (find_dirent(name) >= 0) {
+        journal_abort();
         return -1;
     }
 
     dslot = find_free_dirent();
-    if (dslot < 0) return -1;
+    if (dslot < 0) {
+        journal_abort();
+        return -1;
+    }
 
     inum = find_free_inode();
-    if (inum < 0) return -1;
+    if (inum < 0) {
+        journal_abort();
+        return -1;
+    }
 
     dir = dir_table();
 
     inode_bitmap()[inum] = 1;
+
     inode_init(&inode_table()[inum],
                FS_TYPE_DIR,
                current_dir);
@@ -615,6 +680,11 @@ int fs_mkdir(const char *name) {
 
     dir[dslot].inode = inum;
     dir[dslot].parent = current_dir;
+
+    if (journal_commit() < 0) {
+        journal_abort();
+        return -1;
+    }
 
     return 0;
 }

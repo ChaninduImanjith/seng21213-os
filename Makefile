@@ -62,6 +62,7 @@ KERNEL_C_SRCS  := kernel/kernel.c \
                    kernel/pmm.c \
                    kernel/buddy.c \
                    kernel/ramdisk.c \
+                   kernel/journal.c \
                    kernel/fs.c \
                    kernel/vfs.c
 

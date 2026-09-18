@@ -13,6 +13,7 @@
 #include "ramdisk.h"
 #include "fs.h"
 #include "vfs.h"
+#include "journal.h"
 #include "../include/types.h"
 
 static void cmd_help(void);
@@ -31,6 +32,7 @@ static void cmd_deadlocktest(void);
 static void cmd_deadlockcheck(void);
 static void cmd_kmalloctest(void);
 static void cmd_buddytest(void);
+static void cmd_journaltest(void);
 static void cmd_indirecttest(void);
 static void cmd_mkdir(const char *name);
 static void cmd_cd(const char *name);
@@ -120,6 +122,7 @@ static void cmd_help(void) {
     vga_puts("  deadlockcheck - Scan the resource graph for a deadlock\n");
     vga_puts("  kmtest        - Demo kmalloc/kfree heap allocator\n");
     vga_puts("  buddytest     - Test buddy split/coalesce allocator\n");
+    vga_puts("  journaltest   - Test write-ahead journal recovery\n");
     vga_puts("  indirecttest  - Test Stage 4 single-indirect file blocks (>32KB)\n");
     vga_puts_color("\n  Milestones (to implement):\n", VGA_LIGHT_CYAN, VGA_BLACK);
     vga_puts("  kill     - [L09] Terminate a process\n");
@@ -971,6 +974,128 @@ static void dl_thread2(void *arg) {
 }
 
 
+
+static void cmd_journaltest(void) {
+    static char buf[64];
+    const char *name = "jrecover";
+    const char *msg = "RecoveredFromJournal";
+    int expected = (int)k_strlen(msg);
+    int n;
+    int recovered;
+    int i;
+
+    vga_puts_color("\n  Write-ahead journal recovery test\n",
+                   VGA_LIGHT_CYAN,
+                   VGA_BLACK);
+    vga_puts("  -----------------------------------------------\n");
+
+    vfs_chdir("/");
+
+    /* Clean up a previous normal run if necessary. */
+    vfs_unlink(name);
+
+    /*
+     * The next filesystem commit writes a complete COMMITTED redo log
+     * but deliberately skips checkpointing it to home metadata.
+     */
+    journal_test_defer_next_commit();
+
+    n = vfs_write(name, msg, (uint32_t)expected);
+
+    if (n != expected) {
+        vga_puts_color(
+            "  FAIL: journaled write failed\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    if (journal_state() != JOURNAL_STATE_COMMITTED) {
+        vga_puts_color(
+            "  FAIL: committed journal record was not preserved\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    /*
+     * Home metadata must still represent the pre-transaction filesystem.
+     * The new file becomes visible only after redo recovery.
+     */
+    if (vfs_size(name) != (uint32_t)-1) {
+        vga_puts_color(
+            "  FAIL: metadata reached home before recovery\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    recovered = journal_recover();
+
+    if (recovered != 1) {
+        vga_puts_color(
+            "  FAIL: committed journal was not replayed\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    if (journal_state() != JOURNAL_STATE_CLEAN) {
+        vga_puts_color(
+            "  FAIL: journal was not cleared after checkpoint\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    for (i = 0; i < (int)sizeof(buf); i++) {
+        buf[i] = 0;
+    }
+
+    n = vfs_read(name, buf, sizeof(buf) - 1);
+
+    if (n != expected) {
+        vga_puts_color(
+            "  FAIL: recovered file could not be read\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    buf[n] = 0;
+
+    if (k_strcmp(buf, msg) != 0) {
+        vga_puts_color(
+            "  FAIL: recovered file data mismatch\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    if (vfs_unlink(name) < 0) {
+        vga_puts_color(
+            "  FAIL: cleanup unlink failed\n\n",
+            VGA_LIGHT_RED,
+            VGA_BLACK);
+        return;
+    }
+
+    vga_puts_color(
+        "  PASS: committed redo log survived simulated crash point\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+
+    vga_puts_color(
+        "  PASS: recovery replayed metadata before clearing journal\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+
+    vga_puts_color(
+        "  PASS: recovered file data matched byte-for-byte\n\n",
+        VGA_LIGHT_GREEN,
+        VGA_BLACK);
+}
+
 static void cmd_buddytest(void) {
     void *a;
     void *b;
@@ -1254,6 +1379,7 @@ static void shell_run(void) {
         if (k_strcmp(cmd, "deadlockcheck") == 0) { cmd_deadlockcheck(); continue; }
         if (k_strcmp(cmd, "kmtest") == 0) { cmd_kmalloctest(); continue; }
         if (k_strcmp(cmd, "buddytest") == 0) { cmd_buddytest(); continue; }
+        if (k_strcmp(cmd, "journaltest") == 0) { cmd_journaltest(); continue; }
         if (k_strcmp(cmd, "indirecttest") == 0) { cmd_indirecttest(); continue; }
 
         if (k_strncmp(cmd, "echo ", 5) == 0) {

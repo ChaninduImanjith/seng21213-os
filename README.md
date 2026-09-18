@@ -941,3 +941,61 @@ to 96 sectors (48 KiB), and the Makefile now checks that `kernel.bin`
 does not silently exceed that configured limit.
 
 **Lecture concept:** Stage 3 — buddy allocator / physical memory management.
+
+---
+
+## Bonus Extension — Write-Ahead Metadata Journaling
+
+**What was built:**
+- Added a redo-style write-ahead journal in `kernel/journal.c` and
+  `kernel/journal.h`.
+- Reserved RAM-disk blocks 5-9 for the journal:
+  - block 5: journal header
+  - blocks 6-9: redo copies of filesystem metadata blocks
+- Filesystem data blocks now begin at block 10.
+- Metadata for directory entries, inode bitmap, block bitmap, and inode
+  table is modified through a transaction shadow before reaching its
+  normal home blocks.
+- Journal commits follow write-ahead ordering:
+  1. write redo metadata copies
+  2. mark transaction PREPARED
+  3. write COMMITTED marker
+  4. replay/checkpoint metadata to home blocks
+  5. clear the journal
+- Each logged metadata block has a checksum.
+- `write`, `unlink`, and `mkdir` operations use journal transactions.
+- File replacement uses ordered copy-on-write so replacement data is
+  written before the new metadata is committed.
+
+**Recovery test:**
+
+    journaltest
+
+The test deliberately leaves a valid COMMITTED transaction in the journal
+without checkpointing it to the normal metadata blocks. It then invokes
+recovery and verifies that the redo log restores the new metadata and file.
+
+Expected:
+
+    PASS: committed redo log survived simulated crash point
+    PASS: recovery replayed metadata before clearing journal
+    PASS: recovered file data matched byte-for-byte
+
+**Regression tests:**
+
+    dirtest
+    indirecttest
+    vfstest
+    buddytest
+    memtest
+    kmtest
+
+All previous features should continue to pass.
+
+**Important limitation:**
+The teaching RAM disk is volatile and is cleared by `ramdisk_init()` on each
+kernel boot. Therefore the test simulates a crash between journal commit and
+checkpoint inside one boot session. It demonstrates write-ahead ordering and
+redo recovery, but not persistence across a real power cycle.
+
+**Lecture concept:** Stage 4 / L12 — write-ahead journaling and recovery.

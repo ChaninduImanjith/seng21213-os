@@ -15,12 +15,21 @@
 /* Fixed block numbers -- laid out exactly as the design diagram:
  * 0 = superblock, 1 = directory, 2 = block bitmap, 3 = inode bitmap,
  * 4 = inode table, 5.. = data blocks. */
-#define FS_SUPERBLOCK_NUM    0
-#define FS_DIR_BLOCK_NUM     1
-#define FS_BLOCK_BITMAP_NUM  2
-#define FS_INODE_BITMAP_NUM  3
-#define FS_INODE_TABLE_NUM   4
-#define FS_DATA_START_NUM    5
+#define FS_SUPERBLOCK_NUM       0
+#define FS_DIR_BLOCK_NUM        1
+#define FS_BLOCK_BITMAP_NUM     2
+#define FS_INODE_BITMAP_NUM     3
+#define FS_INODE_TABLE_NUM      4
+
+/* Write-ahead metadata journal:
+ * block 5     = journal header
+ * blocks 6-9 = redo copies of metadata blocks 1-4
+ */
+#define FS_JOURNAL_HEADER_NUM   5
+#define FS_JOURNAL_DATA_NUM     6
+#define FS_JOURNAL_DATA_BLOCKS  4
+
+#define FS_DATA_START_NUM       10
 
 /* L12 §3 -- hierarchical filesystem extension. */
 #define FS_ROOT_INODE   0
